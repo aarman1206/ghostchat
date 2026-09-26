@@ -24,7 +24,6 @@ pub const MAX_MESSAGE_SIZE: usize = 1_048_576;
 /// GhostChat protocol message types.
 /// Each variant carries an opaque payload that the transport layer does not inspect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
 pub enum Message {
     /// Room/session introduction or handshake metadata.
     /// Sent by the room creator to initiate a new room.
@@ -127,7 +126,7 @@ impl fmt::Display for ErrorCode {
 }
 
 /// Encoded protocol message with version and length framing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
     /// Protocol version.
     pub version: u8,
@@ -310,7 +309,7 @@ mod tests {
         let msg = Message::MlsHandshake {
             mls_message: large_payload,
         };
-        let mut envelope = Envelope::new(msg);
+        let envelope = Envelope::new(msg);
         // Manually serialize a too-large envelope (bypassing encode check)
         let bytes = bincode::serialize(&envelope).unwrap();
         let result = Envelope::decode(&bytes);

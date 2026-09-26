@@ -45,10 +45,13 @@ pub struct SessionConfig {
     /// VERIFIED FROM LOCAL SOURCE: present in openmls-0.9.0 prelude.rs.
     pub ciphersuite: Ciphersuite,
 
-    /// Seconds between periodic MLS `self_update` commits (epoch advance).
+    /// Recommended interval, in seconds, for the runtime to trigger
+    /// periodic MLS `self_update` commits (epoch advance).
     ///
-    /// Default: 300 (5 minutes). Provides epoch-level forward secrecy with
-    /// a bounded compromise window. This is NOT per-message forward secrecy.
+    /// Default: 300 (5 minutes). The core library does not run a scheduler;
+    /// the hosting runtime is responsible for invoking `SessionManager::advance_epoch`.
+    /// This provides epoch-level forward secrecy with a bounded compromise
+    /// window. It is NOT per-message forward secrecy.
     pub epoch_update_interval_secs: u64,
 
     /// Maximum number of participants per room (hard limit: 3).

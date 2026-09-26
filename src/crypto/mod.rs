@@ -1,6 +1,6 @@
 use crate::core::{GhostChatError, Result, SessionConfig};
 use openmls::prelude::*;
-use openmls_basic_credential::{BasicCredential, CredentialWithKey, SignatureKeyPair};
+use openmls_basic_credential::SignatureKeyPair;
 use openmls_memory_storage::MemoryStorage;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 

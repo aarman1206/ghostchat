@@ -13,11 +13,10 @@
 //!   - `BasicCredential` and `CredentialWithKey` live in `openmls::credentials`
 //!     (re-exported via `openmls::prelude::*`).
 
+use openmls::prelude::BasicCredential;
 use openmls::prelude::{Ciphersuite, CredentialWithKey, OpenMlsProvider};
-use openmls_basic_credential::{BasicCredential, SignatureKeyPair};
-use openmls_memory_storage::MemoryStorage;
+use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::storage::StorageProvider;
 
 use crate::core::{GhostChatError, Result};
 
