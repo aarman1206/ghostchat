@@ -1,0 +1,25 @@
+[package]
+name = "ghostchat-app"
+version = "0.1.0"
+edition = "2021"
+description = "Ephemeral three-person OpenMLS chat over Tor onion services."
+
+[lib]
+name = "ghostchat_app_lib"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[features]
+default = []
+local-transport = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ghostchat = { path = "../.." }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+tauri = { version = "2", features = ["test"] }

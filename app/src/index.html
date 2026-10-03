@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>GhostChat</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+<div class="ambient ambient-left" aria-hidden="true"></div>
+<div class="ambient ambient-right" aria-hidden="true"></div>
+
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true">👻</div>
+      <div>
+        <p class="brand-name">GhostChat</p>
+        <p class="brand-tagline">Session-scoped 3-person MLS chat</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="status-chip is-connecting" id="runtime-chip" aria-live="polite">
+        <span class="status-dot is-connecting" id="runtime-dot" aria-hidden="true"></span>
+        <span id="runtime-label">Checking connection</span>
+      </div>
+      <button class="icon-button" id="help-button" type="button" aria-label="About GhostChat" title="About GhostChat">?</button>
+    </div>
+  </header>
+
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="GhostChat navigation">
+      <p class="sidebar-label">WORKSPACE</p>
+      <nav class="sidebar-nav">
+        <button class="sidebar-nav-item is-active" type="button" data-go="home">
+          <span class="nav-symbol" aria-hidden="true">⌂</span>
+          <span>Rooms</span>
+        </button>
+        <button class="sidebar-nav-item" type="button" data-go="create">
+          <span class="nav-symbol" aria-hidden="true">＋</span>
+          <span>New room</span>
+        </button>
+        <button class="sidebar-nav-item" type="button" data-go="join">
+          <span class="nav-symbol" aria-hidden="true">↗</span>
+          <span>Join with code</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-room-card" id="sidebar-room-card" hidden>
+        <p class="sidebar-room-label">CURRENT ROOM</p>
+        <p class="sidebar-room-name" id="sidebar-room-name">No active room</p>
+        <p class="sidebar-room-state">
+          <span class="presence-dot is-online" id="sidebar-room-dot" aria-hidden="true"></span>
+          <span id="sidebar-room-state">Ready</span>
+        </p>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="privacy-note">
+          <p class="privacy-note-title"><span aria-hidden="true">✦</span> Session-scoped by design</p>
+          <p class="privacy-note-copy">GhostChat does not write chat history. Other participants, clipboard tools, or the operating system may retain copies.</p>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-column" id="main-content">
+      <div class="notice" id="notice" role="status" aria-live="polite" hidden>
+        <span class="notice-mark" id="notice-mark" aria-hidden="true">i</span>
+        <p class="notice-copy" id="notice-text"></p>
+        <button class="notice-dismiss" id="notice-dismiss" type="button" aria-label="Dismiss notification">×</button>
+      </div>
+
+      <section class="state-screen home-screen" data-screen="home" id="screen-home" aria-labelledby="home-title">
+        <span class="eyebrow">WELCOME TO THE QUIET SIDE</span>
+        <h1 class="home-title" id="home-title">Private conversations,<br><span>kept to this session.</span></h1>
+        <p class="home-copy">GhostChat makes a small room for the people who should be in it. No account or public feed; room data stays scoped to the active session.</p>
+
+        <div class="home-actions">
+          <button class="action-card" id="home-create" type="button">
+            <span class="action-icon" aria-hidden="true">＋</span>
+            <span>
+              <span class="action-title">Create a room</span>
+              <span class="action-copy">Start a fresh private session and invite your people.</span>
+            </span>
+          </button>
+          <button class="action-card" id="home-join" type="button">
+            <span class="action-icon" aria-hidden="true">↗</span>
+            <span>
+              <span class="action-title">Join a room</span>
+              <span class="action-copy">Enter an invite code to join an existing session.</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="feature-row" aria-label="GhostChat principles">
+          <div class="feature-item">
+            <p class="feature-kicker">MLS when connected</p>
+            <p class="feature-copy">Live rooms use MLS encryption after the authenticated Welcome and creator confirmation.</p>
+          </div>
+          <div class="feature-item">
+            <p class="feature-kicker">Small by design</p>
+            <p class="feature-copy">A calm room for a few people, without the noise of a network.</p>
+          </div>
+          <div class="feature-item">
+            <p class="feature-kicker">Session-scoped</p>
+            <p class="feature-copy">End the session when you are finished; room data is cleared from the app view.</p>
+          </div>
+        </div>
+
+        <div class="preview-banner" id="preview-banner" hidden>
+          <span aria-hidden="true">◌</span>
+          <span>Browser preview mode — actions are simulated locally; preview messages are not encrypted or sent anywhere.</span>
+        </div>
+      </section>
+
+      <section class="state-screen form-screen" data-screen="create" id="screen-create" aria-labelledby="create-title" hidden>
+        <div class="section-heading">
+          <div class="section-heading-copy">
+            <button class="back-button" type="button" data-go="home">← Back to rooms</button>
+            <h2 class="section-title" id="create-title">Create a private room</h2>
+            <p class="section-copy">Give the room a name and choose how you want to appear. GhostChat will create a fresh MLS session and return an invite code.</p>
+          </div>
+        </div>
+
+        <div class="form-layout">
+          <form class="panel form-panel" id="create-form" novalidate>
+            <div class="field">
+              <div class="field-label-row">
+                <label class="field-label" for="create-name">Your display name</label>
+                <span class="field-optional">required</span>
+              </div>
+              <input class="text-input" id="create-name" name="display_name" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="e.g. Rowan" required>
+              <p class="field-hint">This is the name other people in the room will see.</p>
+            </div>
+
+            <div class="field">
+              <div class="field-label-row">
+                <label class="field-label" for="create-room-name">Room name</label>
+                <span class="field-optional">optional</span>
+              </div>
+              <input class="text-input" id="create-room-name" name="room_name" type="text" maxlength="192" autocomplete="off" spellcheck="false" placeholder="e.g. Friday night plans">
+              <p class="field-hint">A friendly label for the room. You can keep it simple.</p>
+            </div>
+
+            <button class="primary-button form-submit" id="create-submit" type="submit">
+              <span class="button-label">Create room</span>
+              <span class="button-spinner" aria-hidden="true"></span>
+            </button>
+          </form>
+
+          <aside class="panel form-aside">
+            <div>
+              <div class="aside-mark" aria-hidden="true">✦</div>
+              <h3 class="aside-title">One room.<br>One invite.</h3>
+              <p class="aside-copy">Share the code only with the people you want in the conversation. There are no public rooms to browse.</p>
+              <ul class="aside-list">
+                <li>The session starts fresh every time.</li>
+                <li>Participant changes are visible in the room.</li>
+                <li>End the session when you are finished.</li>
+              </ul>
+            </div>
+            <p class="security-line"><span aria-hidden="true">⌁</span> Private invite</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="state-screen form-screen" data-screen="join" id="screen-join" aria-labelledby="join-title" hidden>
+        <div class="section-heading">
+          <div class="section-heading-copy">
+            <button class="back-button" type="button" data-go="home">← Back to rooms</button>
+            <h2 class="section-title" id="join-title">Join a room</h2>
+            <p class="section-copy">Enter the invite code you received. You will see the room and its current participants before opening the chat.</p>
+          </div>
+        </div>
+
+        <div class="form-layout">
+          <form class="panel form-panel" id="join-form" novalidate>
+            <div class="field">
+              <div class="field-label-row">
+                <label class="field-label" for="join-name">Your display name</label>
+                <span class="field-optional">required</span>
+              </div>
+              <input class="text-input" id="join-name" name="display_name" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="e.g. Mina" required>
+              <p class="field-hint">Choose the name your room will recognize you by.</p>
+            </div>
+
+            <div class="field">
+              <div class="field-label-row">
+                <label class="field-label" for="invite-code">Invite code</label>
+                <span class="field-optional">required</span>
+              </div>
+                <textarea class="text-area invite-input" id="invite-code" name="invite_code" maxlength="16384" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Paste your room code" required></textarea>
+              <p class="field-hint">Up to 16 KiB. This is a bearer invite: anyone who has it can request to join.</p>
+            </div>
+
+            <button class="primary-button form-submit" id="join-submit" type="submit">
+              <span class="button-label">Join room</span>
+              <span class="button-spinner" aria-hidden="true"></span>
+            </button>
+          </form>
+
+          <aside class="panel form-aside">
+            <div>
+              <div class="aside-mark" aria-hidden="true">↗</div>
+              <h3 class="aside-title">The code is the door.</h3>
+              <p class="aside-copy">Anyone with an invite can ask to join. If a code looks wrong, ask the room owner for a fresh one.</p>
+              <ul class="aside-list">
+                <li>Your name can be changed per room.</li>
+                <li>Only the current session is shown.</li>
+                <li>This view does not persist invite or message history.</li>
+              </ul>
+            </div>
+            <p class="security-line"><span aria-hidden="true">⌁</span> No account required</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="state-screen room-screen" data-screen="room" id="screen-room" aria-labelledby="room-title" hidden>
+        <div class="room-hero">
+          <div class="section-heading">
+            <div class="section-heading-copy">
+              <button class="back-button" id="room-back-action" type="button">← Back to rooms</button>
+              <h2 class="section-title" id="room-title">Room ready</h2>
+              <p class="section-copy">Check the invite and participants, then open the chat when everyone is ready.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="room-overview">
+          <article class="panel room-welcome-card">
+            <p class="room-welcome-kicker">PRIVATE SESSION</p>
+            <h3 class="room-welcome-title" id="room-welcome-name">Your room is ready.</h3>
+            <p class="room-welcome-copy" id="room-welcome-copy">Share the invite code with the people you want to bring in. Their presence will appear here as they join.</p>
+          </article>
+          <article class="panel room-code-card">
+            <div class="room-code-header">
+              <p class="room-code-label">INVITE CODE</p>
+              <button class="text-button" id="copy-invite" type="button">Copy</button>
+            </div>
+            <code class="invite-code" id="room-code">Waiting for code</code>
+            <div class="room-code-actions">
+              <p class="room-code-help">Clipboard may retain this bearer invite. Clear it after sharing.</p>
+              <span class="security-line security-line-inline"><span aria-hidden="true">⌁</span> session-scoped</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="room-grid">
+          <article class="panel info-panel">
+            <div class="card-heading">
+              <div>
+                <h3 class="card-title">Participants</h3>
+                <p class="card-subtitle">People currently in this session</p>
+              </div>
+              <span class="count-badge" id="room-participant-count">0</span>
+            </div>
+            <ul class="participant-list" id="room-participants-list"></ul>
+            <p class="empty-participants" id="room-empty-participants" hidden>No one else has joined yet. Keep the room open while you share the code.</p>
+          </article>
+
+          <article class="panel info-panel">
+            <div class="card-heading">
+              <div>
+                <h3 class="card-title">Session status</h3>
+                <p class="card-subtitle">Live state from the MLS session</p>
+              </div>
+            </div>
+                <dl class="session-details">
+                  <div class="session-detail"><dt>State</dt><dd class="is-good" id="room-session-state">Preparing</dd></div>
+                  <div class="session-detail"><dt>Epoch</dt><dd id="room-epoch">—</dd></div>
+                  <div class="session-detail"><dt>Transport</dt><dd id="room-transport">Waiting for Tor</dd></div>
+                  <div class="session-detail"><dt>Network</dt><dd id="room-connection-state">Waiting</dd></div>
+                  <div class="session-detail"><dt>Tor</dt><dd id="room-tor-state">Checking</dd></div>
+                  <div class="session-detail"><dt>Encryption</dt><dd id="room-encryption-state">MLS Welcome pending</dd></div>
+            </dl>
+            <div class="room-action-row">
+              <button class="secondary-button" id="room-advance-epoch" type="button">Rotate keys</button>
+              <button class="danger-button" id="room-shutdown" type="button">End session</button>
+              <button class="primary-button" id="room-enter-chat" type="button"><span class="button-label">Open chat</span> <span aria-hidden="true">→</span></button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="state-screen chat-screen" data-screen="chat" id="screen-chat" aria-labelledby="chat-title" hidden>
+        <header class="chat-header">
+          <div class="chat-heading">
+            <button class="back-button chat-back-button" id="chat-back-room" type="button">← Room</button>
+            <div class="chat-heading-copy">
+              <p class="chat-room-kicker">LIVE ROOM</p>
+              <h2 class="chat-room-title" id="chat-title">GhostChat room</h2>
+              <div class="chat-heading-meta">
+                <span class="status-dot is-ready" id="chat-state-dot" aria-hidden="true"></span>
+                <span class="is-good" id="chat-state-label">Session active</span>
+                <span class="meta-separator" aria-hidden="true">•</span>
+                <span id="chat-epoch-label">Epoch —</span>
+              </div>
+            </div>
+          </div>
+          <div class="chat-header-actions">
+            <button class="secondary-button" id="chat-room-details" type="button">Room details</button>
+            <button class="danger-button" id="chat-shutdown" type="button">End session</button>
+          </div>
+        </header>
+
+        <div class="chat-layout">
+          <aside class="panel chat-sidebar" aria-label="Room participants">
+            <div class="card-heading">
+              <div>
+                <h3 class="card-title">In this room</h3>
+                <p class="card-subtitle">Presence updates live</p>
+              </div>
+              <span class="count-badge" id="chat-participant-count">0</span>
+            </div>
+            <ul class="participant-list" id="chat-participants-list"></ul>
+            <p class="empty-participants" id="chat-empty-participants" hidden>Waiting for participants.</p>
+            <hr class="chat-sidebar-divider">
+            <p class="chat-room-info-label">INVITE CODE</p>
+            <p class="chat-room-info-code" id="chat-invite-code">—</p>
+          </aside>
+
+          <section class="panel chat-main-panel" aria-label="Messages in this session">
+            <div class="message-list-header">
+              <p class="message-list-label">Session messages</p>
+              <p class="message-list-hint" id="message-list-hint">Waiting for secure Welcome</p>
+            </div>
+            <ol class="message-list" id="message-list" role="log" aria-live="polite" aria-relevant="additions text"></ol>
+            <div class="empty-messages" id="empty-messages">
+              <div>
+                <div class="empty-messages-mark" aria-hidden="true">✦</div>
+                <p class="empty-messages-title">The room is quiet.</p>
+                <p class="empty-messages-copy">Messages appear here after the secure session is ready.</p>
+              </div>
+            </div>
+            <form class="composer" id="message-form" novalidate>
+              <div class="composer-main">
+                <label class="sr-only" for="message-input">Write a message</label>
+                <textarea class="text-area" id="message-input" name="message" maxlength="16000" rows="1" autocomplete="off" placeholder="Write a message…" spellcheck="false"></textarea>
+                <button class="primary-button send-button" id="send-submit" type="submit">
+                  <span class="button-label">Send</span>
+                  <span class="button-spinner" aria-hidden="true"></span>
+                </button>
+              </div>
+              <div class="composer-footer">
+                <span id="composer-state">Waiting for secure Welcome</span>
+                <span><kbd>Enter</kbd> to send · single-line messages</span>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="main.js" defer></script>
+</body>
+</html>

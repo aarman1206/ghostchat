@@ -14,11 +14,12 @@
 //!     (re-exported via `openmls::prelude::*`).
 
 use openmls::prelude::BasicCredential;
-use openmls::prelude::{Ciphersuite, CredentialWithKey, OpenMlsProvider};
+use openmls::prelude::{Ciphersuite, CredentialWithKey, KeyPackage, OpenMlsProvider};
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
+use zeroize::Zeroize;
 
-use crate::core::{GhostChatError, Result};
+use crate::core::{GhostChatError, ParticipantId, Result};
 
 /// An ephemeral session identity comprising an Ed25519 signing key and a
 /// one-time `BasicCredential`.
@@ -31,6 +32,15 @@ pub struct EphemeralIdentity {
     pub signer: SignatureKeyPair,
     /// The openmls credential bundle (public key + credential type).
     pub credential_with_key: CredentialWithKey,
+    /// The random BasicCredential identity bytes. These remain in memory and
+    /// are never included in an application-facing response.
+    identity_bytes: Vec<u8>,
+}
+
+impl Drop for EphemeralIdentity {
+    fn drop(&mut self) {
+        self.identity_bytes.zeroize();
+    }
 }
 
 impl EphemeralIdentity {
@@ -64,7 +74,43 @@ impl EphemeralIdentity {
         Ok(Self {
             signer,
             credential_with_key,
+            identity_bytes: identity_bytes.to_vec(),
         })
+    }
+
+    /// Return the opaque credential identity bytes for internal protocol use.
+    pub fn identity_bytes(&self) -> &[u8] {
+        &self.identity_bytes
+    }
+
+    /// Return the ephemeral public signing key.
+    pub fn public_key(&self) -> &[u8] {
+        self.signer.public()
+    }
+
+    /// Return a non-identifying routing identifier derived from the public key.
+    pub fn participant_id(&self) -> ParticipantId {
+        ParticipantId::from_public_key(self.signer.public())
+    }
+
+    /// Build and register a KeyPackage for this identity.
+    ///
+    /// The returned package is public. OpenMLS stores the matching private
+    /// key material in the supplied provider's in-memory storage.
+    pub fn key_package(
+        &self,
+        ciphersuite: Ciphersuite,
+        provider: &OpenMlsRustCrypto,
+    ) -> Result<KeyPackage> {
+        KeyPackage::builder()
+            .build(
+                ciphersuite,
+                provider,
+                &self.signer,
+                self.credential_with_key.clone(),
+            )
+            .map(|bundle| bundle.key_package().clone())
+            .map_err(|e| GhostChatError::MlsError(e.to_string()))
     }
 }
 
