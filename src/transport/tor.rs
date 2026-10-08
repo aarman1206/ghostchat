@@ -143,6 +143,10 @@ pub struct TorConfig {
     pub max_control_line_bytes: usize,
     /// Maximum bytes in one control-port data block.
     pub max_control_data_bytes: usize,
+    /// Require Tor to advertise SAFECOOKIE instead of allowing the desktop
+    /// compatibility fallback to COOKIE.  Android-owned runtimes set this to
+    /// true; the default remains false for the existing desktop daemon path.
+    pub require_safe_cookie: bool,
 }
 
 impl Default for TorConfig {
@@ -156,6 +160,7 @@ impl Default for TorConfig {
             write_timeout: DEFAULT_WRITE_TIMEOUT,
             max_control_line_bytes: DEFAULT_CONTROL_LINE_LIMIT,
             max_control_data_bytes: DEFAULT_CONTROL_DATA_LIMIT,
+            require_safe_cookie: false,
         }
     }
 }
@@ -211,6 +216,15 @@ impl TorConfig {
     /// Override the cookie path used for COOKIE authentication.
     pub fn with_cookie_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.cookie_path = Some(path.into());
+        self
+    }
+
+    /// Require SAFECOOKIE authentication for an app-owned Tor runtime.
+    ///
+    /// This is deliberately opt-in so desktop installations retain their
+    /// existing COOKIE compatibility behavior.
+    pub fn require_safe_cookie(mut self) -> Self {
+        self.require_safe_cookie = true;
         self
     }
 
@@ -370,6 +384,12 @@ impl TorDaemon {
             ));
         }
 
+        if config.require_safe_cookie && !auth.safecookie {
+            return Err(TorError::Authentication(
+                "Tor control port does not advertise required SAFECOOKIE authentication".to_owned(),
+            ));
+        }
+
         let cookie_path = config
             .cookie_path
             .clone()
@@ -409,7 +429,7 @@ impl TorDaemon {
     /// waiting for another control command to complete. Ephemeral onion
     /// services created through this connection are removed by Tor when the
     /// control connection closes.
-    pub(crate) fn shutdown(&self) {
+    pub fn shutdown(&self) {
         self.inner.control.shutdown();
     }
 
@@ -439,6 +459,62 @@ impl TorDaemon {
             .ok()
             .filter(|value| *value <= 100)
             .ok_or_else(|| TorError::Protocol("bootstrap PROGRESS is outside 0..=100".to_owned()))
+    }
+
+    /// Ask the authenticated controller to make this connection the Tor
+    /// instance's owner.  The Android supervisor keeps this connection open;
+    /// Tor then stops when the owning app/controller disappears.
+    pub fn take_ownership(&self) -> TorResult<()> {
+        let reply = self.inner.control.command("TAKEOWNERSHIP")?;
+        if !reply.is_success() {
+            return Err(reply.control_error("TAKEOWNERSHIP"));
+        }
+        Ok(())
+    }
+
+    /// Discover Tor's resolved SOCKS listener through the authenticated
+    /// control port.  The result is constrained to a loopback, nonzero TCP
+    /// endpoint; callers must not use a fixed/default SOCKS port for a managed
+    /// runtime.
+    pub fn socks_addr(&self) -> TorResult<SocketAddr> {
+        let reply = self.inner.control.command("GETINFO net/listeners/socks")?;
+        if !reply.is_success() {
+            return Err(reply.control_error("GETINFO net/listeners/socks"));
+        }
+
+        let value = reply
+            .lines
+            .iter()
+            .find_map(|line| line.text.strip_prefix("net/listeners/socks="))
+            .ok_or_else(|| {
+                TorError::Protocol("Tor SOCKS listener discovery omitted its address".to_owned())
+            })?;
+        let value = value.trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .unwrap_or(value);
+        let address = value.parse::<SocketAddr>().map_err(|_| {
+            TorError::Protocol(
+                "Tor SOCKS listener discovery returned an invalid address".to_owned(),
+            )
+        })?;
+        if !address.ip().is_loopback() || address.port() == 0 {
+            return Err(TorError::Protocol(
+                "Tor SOCKS listener discovery returned a non-loopback address".to_owned(),
+            ));
+        }
+        Ok(address)
+    }
+
+    /// Request an orderly Tor shutdown on the authenticated supervisor
+    /// connection.  Closing the connection remains the bounded fallback.
+    pub fn signal_shutdown(&self) -> TorResult<()> {
+        let reply = self.inner.control.command("SIGNAL SHUTDOWN")?;
+        if !reply.is_success() {
+            return Err(reply.control_error("SIGNAL SHUTDOWN"));
+        }
+        Ok(())
     }
 
     fn add_onion(&self, local_addr: SocketAddr, virtual_port: u16) -> TorResult<String> {
@@ -2009,6 +2085,43 @@ mod tests {
         let config =
             TorConfig::default().with_control_addr(SocketAddr::from(([10, 0, 0, 1], 9051)));
         assert!(matches!(config.validate(), Err(TorError::Config(_))));
+    }
+
+    #[test]
+    fn safe_cookie_requirement_is_opt_in_for_managed_runtimes() {
+        assert!(!TorConfig::default().require_safe_cookie);
+        assert!(
+            TorConfig::default()
+                .require_safe_cookie()
+                .require_safe_cookie
+        );
+    }
+
+    #[test]
+    fn authenticated_socks_listener_discovery_rejects_non_loopback() {
+        let (daemon, mut peer) = control_pair(Duration::from_millis(500));
+        let server = thread::spawn(move || {
+            assert_eq!(
+                read_crlf_line(&mut peer, 1024).unwrap(),
+                b"GETINFO net/listeners/socks"
+            );
+            peer.write_all(b"250-net/listeners/socks=\"127.0.0.1:12345\"\r\n250 OK\r\n")
+                .unwrap();
+        });
+        assert_eq!(
+            daemon.socks_addr().unwrap(),
+            SocketAddr::from(([127, 0, 0, 1], 12345))
+        );
+        server.join().unwrap();
+
+        let (daemon, mut peer) = control_pair(Duration::from_millis(500));
+        let server = thread::spawn(move || {
+            let _ = read_crlf_line(&mut peer, 1024);
+            peer.write_all(b"250-net/listeners/socks=\"10.0.0.1:12345\"\r\n250 OK\r\n")
+                .unwrap();
+        });
+        assert!(matches!(daemon.socks_addr(), Err(TorError::Protocol(_))));
+        server.join().unwrap();
     }
 
     #[test]

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Keep any future fallback file-domain Tor material out of backups. The
+         live runtime is already rooted in getNoBackupFilesDir(). -->
+    <exclude domain="file" path="tor" />
+    <exclude domain="database" path="tor" />
+    <exclude domain="sharedpref" path="tor" />
+</full-backup-content>

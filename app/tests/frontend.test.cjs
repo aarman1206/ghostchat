@@ -61,18 +61,31 @@ async function load({ desktop = true, broken = false, listenFailure = false, sta
   for (const match of markup.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)) {
     elements.get(match[1]).hidden = /\bhidden\b/.test(match[0]);
   }
-  const screens = ["home", "create", "join", "room", "chat"].map((name) => {
+  const screens = ["home", "onboarding", "create", "join", "room", "chat", "settings", "privacy", "security", "about"].map((name) => {
     const element = elements.get(`screen-${name}`);
     element.dataset.screen = name;
     return element;
   });
+  const goButtons = Array.from(markup.matchAll(/<button\b[^>]*>/g), ([tag]) => {
+    const destination = tag.match(/\bdata-go="([^"]+)"/);
+    if (!destination) return null;
+    const element = new Element();
+    element.dataset.go = destination[1];
+    const historyMode = tag.match(/\bdata-history="([^"]+)"/);
+    if (historyMode) element.dataset.history = historyMode[1];
+    return element;
+  }).filter(Boolean);
   const events = new Map();
+  const windowEvents = new Map();
   const calls = [];
+  const historyEntries = [{ state: { ghostChatScreen: "home" }, url: "#home" }];
+  let historyIndex = 0;
   let statusTimer;
   const document = {
     querySelector: (selector) => elements.get(selector.slice(1)),
-    querySelectorAll: (selector) => selector === "[data-screen]" ? screens : [],
+    querySelectorAll: (selector) => selector === "[data-screen]" ? screens : selector === "[data-go]" ? goButtons : [],
     createElement: () => new Element(),
+    documentElement: { dataset: {} },
   };
   const window = {
     location: { protocol: desktop ? "tauri:" : "http:", hostname: desktop ? "localhost" : "localhost" },
@@ -81,7 +94,30 @@ async function load({ desktop = true, broken = false, listenFailure = false, sta
     clearTimeout() {},
     setInterval: (handler) => { statusTimer = handler; return 1; },
     clearInterval() {},
-    addEventListener() {},
+    matchMedia: () => ({ matches: false }),
+    addEventListener: (name, handler) => {
+      const listeners = windowEvents.get(name) || [];
+      listeners.push(handler);
+      windowEvents.set(name, listeners);
+    },
+    dispatchEvent: (event) => {
+      for (const handler of windowEvents.get(event.type) || []) handler(event);
+    },
+    history: {
+      pushState: (state, _title, url) => {
+        historyEntries.splice(historyIndex + 1);
+        historyEntries.push({ state, url });
+        historyIndex = historyEntries.length - 1;
+      },
+      replaceState: (state, _title, url) => {
+        historyEntries[historyIndex] = { state, url };
+      },
+      back: () => {
+        if (historyIndex === 0) return;
+        historyIndex -= 1;
+        window.dispatchEvent({ type: "popstate", state: historyEntries[historyIndex].state });
+      },
+    },
     confirm: () => true,
   };
   if (desktop && !broken) {
@@ -96,19 +132,34 @@ async function load({ desktop = true, broken = false, listenFailure = false, sta
         events.set(name, handler);
         return () => events.delete(name);
       } },
+      app: {
+        onBackButtonPress: async (handler) => {
+          window.backHandler = handler;
+          return { unregister: () => { window.backHandler = undefined; } };
+        },
+        exit: async (code) => { window.exitCode = code; },
+      },
     };
   }
-  // All interactions exercise the unmodified application through DOM handlers
-  // and its Tauri event boundary. Persistence and logging are deliberately traps.
+  // All interactions exercise the application through DOM/history handlers
+  // and its Tauri event boundary. Persistent storage and logging remain traps.
   const forbidden = new Proxy({}, { get() { throw new Error("unexpected persistent or console access"); } });
   window.localStorage = forbidden;
   window.sessionStorage = forbidden;
-  window.history = forbidden;
   vm.runInNewContext(source, { window, document, navigator: {}, TextEncoder, console: forbidden });
-  for (let index = 0; index < 20; index++) await Promise.resolve();
+  for (let index = 0; index < 40; index++) await Promise.resolve();
   return {
     elements, calls,
     tick: () => statusTimer?.(),
+    back: (payload = {}) => {
+      if (historyIndex > 0) window.history.back();
+      else window.backHandler?.({ ...payload, canGoBack: false });
+    },
+    go: async (screen) => {
+      const button = goButtons.find((item) => item.dataset.go === screen);
+      if (button) await button.fire("click");
+    },
+    exitCode: () => window.exitCode,
     emit: (name, payload) => events.get(`ghostchat://${name}`)?.({ payload }),
     create: async () => {
       elements.get("create-name").value = "Alice";
@@ -128,7 +179,7 @@ test("desktop IPC failure never creates a simulated room", async () => {
   assert.equal(ui.elements.get("screen-room").hidden, true);
   assert.equal(ui.elements.get("create-submit").disabled, true);
   assert.equal(ui.elements.get("preview-banner").hidden, true);
-  assert.match(ui.elements.get("notice-text").textContent, /desktop/i);
+  assert.match(ui.elements.get("notice-text").textContent, /getting ready/i);
 });
 
 test("failed desktop event registration and unavailable Tor keep room actions locked", async () => {
@@ -139,6 +190,38 @@ test("failed desktop event registration and unavailable Tor keep room actions lo
     assert.equal(ui.calls.filter((call) => call.command === "create_room").length, 0);
     assert.equal(ui.elements.get("preview-banner").hidden, true);
   }
+});
+
+test("a stopped Android Tor runtime lets the first room action start it", async () => {
+  const ui = await load({ status: { status: "stopped", transport: "tor-only" } });
+  assert.equal(ui.elements.get("create-submit").disabled, false, `${ui.elements.get("runtime-label").textContent}; ${ui.elements.get("notice-text").textContent}; calls=${ui.calls.map((call) => call.command).join(",")}`);
+  await ui.create();
+  assert.equal(ui.calls.filter((call) => call.command === "create_room").length, 1);
+  assert.equal(ui.elements.get("create-submit").querySelector(".button-label").textContent, "Create room");
+});
+
+test("Android Back returns through chat and room before leaving the app", async () => {
+  const ui = await load();
+  await ui.create();
+  await ui.elements.get("room-enter-chat").fire("click");
+  assert.equal(ui.elements.get("screen-chat").hidden, false);
+  await ui.back();
+  assert.equal(ui.elements.get("screen-room").hidden, false);
+  await ui.back();
+  assert.equal(ui.elements.get("screen-home").hidden, false);
+  await ui.back();
+  assert.equal(ui.exitCode(), 0);
+});
+
+test("Android WebView Back returns from privacy notes through settings", async () => {
+  const ui = await load();
+  await ui.go("settings");
+  await ui.go("privacy");
+  assert.equal(ui.elements.get("screen-privacy").hidden, false);
+  await ui.back();
+  assert.equal(ui.elements.get("screen-settings").hidden, false);
+  await ui.back();
+  assert.equal(ui.elements.get("screen-home").hidden, false);
 });
 
 test("ordinary browser preview stays explicitly unencrypted with sending locked", async () => {
@@ -177,7 +260,7 @@ test("stale or unscoped events cannot mutate a new room and plaintext is bounded
   assert.equal(ui.elements.get("screen-home").hidden, false);
 });
 
-test("join remains locked through Welcome and creator confirmation", async () => {
+test("join remains locked until the room owner approves the request", async () => {
   const pending = snapshot("b".repeat(32), {
     state: "connecting", epoch: 0, encryption_active: false, connection_state: "connecting",
     participants: [{ id: `p-${"b".repeat(64)}`, display_name: "Bob", is_self: true, state: "joining" }],
@@ -186,10 +269,10 @@ test("join remains locked through Welcome and creator confirmation", async () =>
   await ui.join();
   assert.equal(ui.elements.get("room-enter-chat").disabled, true);
   assert.equal(ui.elements.get("room-shutdown").textContent, "Leave room");
-  assert.match(ui.elements.get("room-enter-chat").label.textContent, /Welcome/i);
+  assert.match(ui.elements.get("room-enter-chat").label.textContent, /Securing room/i);
   ui.emit("session-state", { session_id: pending.session_id, payload: { ...pending, epoch: 1 } });
   assert.equal(ui.elements.get("room-enter-chat").disabled, true);
-  assert.match(ui.elements.get("room-enter-chat").label.textContent, /confirmation/i);
+  assert.match(ui.elements.get("room-enter-chat").label.textContent, /room owner/i);
   ui.emit("session-state", { session_id: pending.session_id, payload: { ...pending, state: "active", encryption_active: true, connection_state: "connected" } });
   assert.equal(ui.elements.get("room-enter-chat").disabled, false);
 });
@@ -279,4 +362,33 @@ test("capacity and invalid-invitation errors have actionable private-safe labels
   await ui.elements.get("message-form").fire("submit");
   assert.match(ui.elements.get("notice-text").textContent, /line breaks/);
   assert.equal(ui.calls.filter((call) => call.command === "send_message").length, 0);
+});
+
+test("onboarding, settings, theme and product information stay frontend-only", async () => {
+  const ui = await load();
+  await ui.elements.get("home-onboarding").fire("click");
+  assert.equal(ui.elements.get("screen-onboarding").hidden, false);
+  assert.match(markup, /invite is verified and the room owner confirms the join/i);
+
+  await ui.elements.get("settings-button").fire("click");
+  assert.equal(ui.elements.get("screen-settings").hidden, false);
+  await ui.elements.get("theme-light").fire("click");
+  assert.equal(ui.elements.get("theme-light").attributes.get("aria-pressed"), "true");
+  assert.match(ui.elements.get("theme-status").textContent, /Light theme selected/);
+  assert.equal(ui.calls.filter((call) => call.command === "settings").length, 0);
+
+  await ui.elements.get("help-button").fire("click");
+  assert.equal(ui.elements.get("screen-about").hidden, false);
+  assert.match(markup, /not been independently audited or certified/);
+});
+
+test("form validation exposes an inline accessible error and clears when corrected", async () => {
+  const ui = await load();
+  await ui.elements.get("create-form").fire("submit");
+  assert.equal(ui.elements.get("create-name-error").hidden, false);
+  assert.match(ui.elements.get("create-name-error").textContent, /display name/);
+  assert.equal(ui.elements.get("create-name").attributes.get("aria-invalid"), "true");
+  await ui.elements.get("create-name").fire("input");
+  assert.equal(ui.elements.get("create-name-error").hidden, true);
+  assert.equal(ui.elements.get("create-name").attributes.get("aria-invalid"), "false");
 });

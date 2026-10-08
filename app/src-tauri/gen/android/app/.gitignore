@@ -1,0 +1,7 @@
+/src/main/**/generated
+/src/main/jniLibs/**/*.so
+/src/main/assets/tauri.conf.json
+/tauri.build.gradle.kts
+/proguard-tauri.pro
+/tauri.properties# Source-built embedded Tor payload with pinned provenance and checksum.
+!/src/main/jniLibs/arm64-v8a/libtor.so

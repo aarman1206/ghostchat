@@ -1,0 +1,51 @@
+[package]
+name = "ghostchat-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.ghostchat]
+path = ".."
+
+[[bin]]
+name = "fuzz_target_1"
+path = "fuzz_targets/fuzz_target_1.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[[bin]]
+name = "fuzz_session"
+path = "fuzz_targets/fuzz_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_invitation"
+path = "fuzz_targets/fuzz_invitation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_frame"
+path = "fuzz_targets/fuzz_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_state"
+path = "fuzz_targets/fuzz_state.rs"
+test = false
+doc = false
+bench = false

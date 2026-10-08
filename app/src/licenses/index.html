@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Open-source notices · GhostChat</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <main class="main-column info-screen">
+    <a class="back-button" href="../index.html">← Back to GhostChat</a>
+    <span class="eyebrow">OPEN-SOURCE SOFTWARE</span>
+    <h1 class="section-title">Third-party notices</h1>
+    <p class="section-copy">GhostChat for Android includes Guardian Project’s Tor runtime, built from pinned upstream source. Tor’s build enables GPL-licensed functionality, and the binary identifies GNU GPL v3. Source revisions and license texts are listed here.</p>
+
+    <section class="info-grid" aria-label="Bundled native components">
+      <article class="panel info-card"><h2>Tor 0.4.9.13 · ARM64</h2><p>Guardian Project <code>tor-android</code> source commit <code>4052acd898b2ccc7bebb3fe55505ad527a6ac4db</code>; Tor source commit <code>8aa9ce2e4e3332ef10f5b7f7e0562c60affe2ece</code>. Library SHA-256: <code>2061124c852afa985ae828b177b2a484059d11a1b3626489d9caea8e8a255e53</code>.</p><a href="tor/TOR-LICENSE.txt">Tor license text</a> · <a href="tor/GPL-3.0.txt">GNU GPL v3</a></article>
+      <article class="panel info-card"><h2>Equi-X and HashX</h2><p>Tor’s optional proof-of-work components are covered by the upstream LGPL terms.</p><a href="tor/EQUIX-LGPL-3.0.txt">Equi-X LGPL notice</a> · <a href="tor/HASHX-LGPL-3.0.txt">HashX LGPL notice</a></article>
+      <article class="panel info-card"><h2>OpenSSL 3.5.9</h2><p>Statically linked from the pinned Guardian submodule source.</p><a href="tor/OPENSSL-LICENSE.txt">OpenSSL license text</a></article>
+      <article class="panel info-card"><h2>libevent 2.1.13</h2><p>Statically linked from the pinned Guardian submodule source.</p><a href="tor/LIBEVENT-LICENSE.txt">libevent license text</a></article>
+      <article class="panel info-card"><h2>zlib 1.3.2</h2><p>Statically linked from the pinned Guardian submodule source.</p><a href="tor/ZLIB-LICENSE.txt">zlib license text</a></article>
+      <article class="panel info-card"><h2>zstd 1.5.7</h2><p>Statically linked under its BSD license.</p><a href="tor/ZSTD-LICENSE.txt">zstd license text</a></article>
+    </section>
+
+    <p class="section-copy">Build provenance and checksums are recorded in the GhostChat Android release documentation.</p>
+  </main>
+</body>
+</html>

@@ -32,8 +32,12 @@ An IPC failure never selects a browser mock or a local transport.
 ## Requirements
 
 - Rust/Cargo, Tauri CLI v2 (`cargo install tauri-cli --version '^2' --locked`).
-- A running system Tor daemon with a bootstrapped SOCKS listener and
+- Desktop: a running system Tor daemon with a bootstrapped SOCKS listener and
   cookie-authenticated control port. GhostChat does not launch or configure Tor.
+- Android builds an app-owned Tor supervisor and packages an ARM64 `libtor.so`
+  built from the pinned Guardian/Tor source. No other Tor app, system daemon,
+  SOCKS proxy or clearnet fallback is used. The runtime and room workflow still
+  need an Android device or emulator run before claiming end-to-end operation.
 - Linux desktop build prerequisites: GTK3, WebKitGTK 4.1, development headers,
   a C/C++ toolchain, pkg-config, and the usual Tauri platform prerequisites.
   On Debian/Ubuntu, these commonly include `build-essential`, `pkg-config`,
@@ -41,7 +45,7 @@ An IPC failure never selects a browser mock or a local transport.
   `librsvg2-dev`, `libssl-dev`, and `patchelf`.
 
 Frontend files are static; no Node package install or JS build is needed.
-Node is needed only for frontend regression tests. Keep the system Tor,
+Node is needed only for frontend regression tests. Keep the desktop system Tor,
 WebKit and OS security updates current.
 
 ## Tor configuration
@@ -119,17 +123,68 @@ python3 -m http.server 4174 --bind 127.0.0.1 --directory app/src
 Open `http://127.0.0.1:4174`. It is prominently labeled simulated and
 unencrypted; message sending is disabled. It is not a Tor client.
 
+### Android builds and runtime status
+
+The Tauri Android project is in `app/src-tauri/gen/android`. It preserves the
+Rust/OpenMLS/TorTransport architecture with an Android-only provider, Tauri
+plugin, foreground session service and private same-UID `:tor` worker. The
+ARM64 APK and AAB package a source-built Tor `0.4.9.14` library, statically
+linked with OpenSSL `3.5.9`, libevent `2.1.13`, zlib `1.3.2` and zstd `1.5.7`.
+See [Android Tor provenance, licenses and build details](THIRD_PARTY_NOTICES_ANDROID.md)
+and the [corresponding-source package record](ANDROID_TOR_SOURCE_PACKAGE.md).
+
+GhostChat owns its Tor runtime and does not use Orbot, Tor Browser, system Tor,
+external SOCKS or a clearnet fallback. The current debug APK, unsigned release
+APK and unsigned AAB were inspected directly; each contains the ARM64 Tor
+library and JNI bridge. The binary exports the five public Tor embedding
+symbols the bridge looks up. These checks establish build and packaging only;
+they do not prove Android loaded the library, Tor bootstrapped, SAFECOOKIE
+worked, or a real room was created.
+
+To rebuild Tor, extract
+`compliance/ghostchat-android-tor-corresponding-source-0.4.9.14.tar.gz`, set
+`JAVA_HOME` to Java 25 and `ANDROID_NDK_HOME` to NDK `30.0.16248370`, then run
+the package's `build-android-libtor.sh` script. It checks the official Tor
+source checksum and required dynamic exports. Copy the output to
+`app/src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libtor.so`. Build
+prerequisites also include Java 21 for Android Gradle, Android SDK platform
+36, NDK `29.0.13846066` for GhostChat's JNI bridge, the
+`aarch64-linux-android` Rust target and Tauri CLI v2. From `app/src-tauri`:
+
+```sh
+cargo tauri android build --apk --debug --target aarch64 --ci
+cargo tauri android build --apk --target aarch64 --ci
+cargo tauri android build --aab --target aarch64 --ci
+```
+
+The debug APK is signed with the Android debug key. The release APK/AAB are
+unsigned because no production keystore was available. They require signing
+with a real release key before distribution; signing keys and credentials must
+remain outside version control. Tor is built with Guardian's GPL mode. The
+corresponding source, build script, provenance and notices are in this
+checkout; review distribution and installation-information requirements
+before release. The exact artifact sizes and hashes are in
+[ANDROID_RELEASE.md](ANDROID_RELEASE.md).
+
+No Android device or emulator is attached in this validation. Installation,
+first-launch rendering, lifecycle behavior, JNI loading, embedded Tor startup,
+SAFECOOKIE, bootstrap, onion-service creation and the multi-participant room
+workflow remain **unverified**. A successful APK/AAB build does not establish
+runtime readiness.
+
 ## Create, invite, join, leave
 
-1. Start Tor; wait for **Tor ready** in the desktop app.
-2. Choose **Create a room**, set a display name and optional local room label.
-3. Copy the signed bearer invitation and send it through a trusted out-of-band
-   channel. Do not put it in public posts, logs or bug reports.
+1. On desktop, start your authenticated local Tor daemon; on Android, GhostChat
+   starts its app-owned Tor runtime when you create or join a room. Wait for the
+   private connection status to become ready.
+2. Choose **Create a room** and set a display name.
+3. Copy the signed invitation code and send it through a trusted out-of-band
+   channel. The current Android flow is copy/paste; it does not provide a QR
+   scanner. Do not put the code in public posts, logs or bug reports.
 4. On another GhostChat instance, select **Join a room** and paste the code.
-5. Wait for the authenticated MLS Welcome **and creator confirmation** before
-   sending. The status shows transport, Tor state, membership and epoch.
-6. The owner can rotate epochs or remove a member. Joiners use **Leave room**;
-   the owner uses **End session** to close everyone’s room.
+5. Wait for the secure room connection and room owner approval before sending.
+6. Joiners use **Leave room**; the owner uses **End session** to close
+   everyone's room.
 
 A fourth member is rejected by the core, not just the UI. Joins are serialized:
 if another join is in progress, retry with a fresh join after it finishes.
@@ -256,6 +311,10 @@ Deterministic tests cover malformed SOCKS/control replies, unavailable daemons,
 SAFECOOKIE proof failure, stalled/partial framing, bounded queues/cleanup,
 invitation tampering, MLS control policies and join races. Seeded decoder
 corpora are lightweight property-style regressions, not exhaustive fuzzing.
+
+Android device-dependent checks require an attached ARM64 device or emulator
+and a packaged, approved native Tor payload. Build-only Android results do not
+verify service lifecycle, Tor loading, SAFECOOKIE, bootstrap or chat behavior.
 
 For a dependency check with an installed cargo-audit:
 

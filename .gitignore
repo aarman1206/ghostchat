@@ -1,2 +1,7 @@
 /target/
-/app/src-tauri/gen/
+/app/src-tauri/gen/*
+!/app/src-tauri/gen/android/
+/app/src-tauri/gen/android/app/build/
+/app/src-tauri/gen/android/app/.cxx/
+/app/src-tauri/gen/android/app/.gradle/
+/app/src-tauri/gen/android/target/

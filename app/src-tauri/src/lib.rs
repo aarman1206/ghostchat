@@ -5,13 +5,19 @@ use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "android"))]
 use ghostchat::transport::TorConfig;
+#[cfg(not(target_os = "android"))]
+use ghostchat::TorDaemon;
 use ghostchat::{
     ChatMessage, LocalRoom, NetworkRoom, NetworkUiEvent, ParticipantId, RoomSnapshot,
-    SessionConfig, TorDaemon, TorInvitation,
+    SessionConfig, TorInvitation,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
+
+#[cfg(target_os = "android")]
+mod android_tor;
 
 // Core caps the encoded invitation at 8 KiB. The UI accepts its hexadecimal
 // representation, which is two ASCII characters per encoded byte.
@@ -64,6 +70,79 @@ struct AppStateInner {
     closing: bool,
 }
 
+/// A room-owned Tor runtime lease.
+///
+/// Desktop uses a no-op lease because the configured external daemon is not
+/// owned by GhostChat. Android leases own one native supervisor generation;
+/// all cloned room handles share the same idempotent stop and health state.
+#[derive(Clone)]
+struct TorLease {
+    inner: Arc<TorLeaseInner>,
+}
+
+struct TorLeaseInner {
+    released: AtomicBool,
+    stop: Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
+    healthy: Box<dyn Fn() -> bool + Send + Sync + 'static>,
+}
+
+impl TorLease {
+    #[cfg(not(target_os = "android"))]
+    fn none() -> Self {
+        Self {
+            inner: Arc::new(TorLeaseInner {
+                released: AtomicBool::new(false),
+                stop: Mutex::new(Some(Box::new(|| {}))),
+                healthy: Box::new(|| true),
+            }),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn managed(
+        stop: impl FnOnce() + Send + 'static,
+        healthy: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            inner: Arc::new(TorLeaseInner {
+                released: AtomicBool::new(false),
+                stop: Mutex::new(Some(Box::new(stop))),
+                healthy: Box::new(healthy),
+            }),
+        }
+    }
+
+    fn release(&self) {
+        if !self.inner.released.swap(true, Ordering::AcqRel) {
+            let mut stop = match self.inner.stop.lock() {
+                Ok(stop) => stop,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if let Some(stop) = stop.take() {
+                stop();
+            }
+        }
+    }
+
+    fn is_healthy(&self) -> bool {
+        !self.inner.released.load(Ordering::Acquire) && (self.inner.healthy)()
+    }
+}
+
+impl Drop for TorLeaseInner {
+    fn drop(&mut self) {
+        if !self.released.swap(true, Ordering::AcqRel) {
+            let stop = match self.stop.get_mut() {
+                Ok(stop) => stop,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if let Some(stop) = stop.take() {
+                stop();
+            }
+        }
+    }
+}
+
 /// A cloneable handle to the one room owned by the application.
 ///
 /// The local variant is deliberately only reachable through the explicit
@@ -73,7 +152,7 @@ struct AppStateInner {
 #[derive(Clone)]
 enum ActiveRoom {
     Local(Arc<Mutex<LocalRoom>>),
-    Network(NetworkRoom),
+    Network { room: NetworkRoom, tor: TorLease },
 }
 
 impl ActiveRoom {
@@ -87,7 +166,7 @@ impl ActiveRoom {
                 room.snapshot(participant)
                     .map_err(|error| error.to_string())
             }
-            Self::Network(room) => room.snapshot().map_err(|error| error.to_string()),
+            Self::Network { room, .. } => room.snapshot().map_err(|error| error.to_string()),
         }
     }
 
@@ -105,7 +184,9 @@ impl ActiveRoom {
                 room.send_message(participant, body)
                     .map_err(|error| error.to_string())
             }
-            Self::Network(room) => room.send_message(body).map_err(|error| error.to_string()),
+            Self::Network { room, .. } => {
+                room.send_message(body).map_err(|error| error.to_string())
+            }
         }
     }
 
@@ -116,21 +197,21 @@ impl ActiveRoom {
                 .map_err(|_| "local room lock poisoned".to_string())?
                 .advance_epoch()
                 .map_err(|error| error.to_string()),
-            Self::Network(room) => room.advance_epoch().map_err(|error| error.to_string()),
+            Self::Network { room, .. } => room.advance_epoch().map_err(|error| error.to_string()),
         }
     }
 
     fn poll(&self) -> Result<Vec<NetworkUiEvent>, String> {
         match self {
             Self::Local(_) => Ok(Vec::new()),
-            Self::Network(room) => room.poll().map_err(|error| error.to_string()),
+            Self::Network { room, .. } => room.poll().map_err(|error| error.to_string()),
         }
     }
 
     fn is_creator(&self) -> Result<bool, String> {
         match self {
             Self::Local(_) => Ok(true),
-            Self::Network(room) => room.is_creator().map_err(|error| error.to_string()),
+            Self::Network { room, .. } => room.is_creator().map_err(|error| error.to_string()),
         }
     }
 
@@ -139,7 +220,7 @@ impl ActiveRoom {
             Self::Local(_) => {
                 Err("participant removal is only available for Tor rooms".to_string())
             }
-            Self::Network(room) => room
+            Self::Network { room, .. } => room
                 .remove_participant(participant_id)
                 .map_err(|error| error.to_string()),
         }
@@ -152,7 +233,18 @@ impl ActiveRoom {
                 .map_err(|_| "local room lock poisoned".to_string())?
                 .shutdown()
                 .map_err(|error| error.to_string()),
-            Self::Network(room) => room.shutdown().map_err(|error| error.to_string()),
+            Self::Network { room, tor } => {
+                let result = room.shutdown().map_err(|error| error.to_string());
+                tor.release();
+                result
+            }
+        }
+    }
+
+    fn runtime_healthy(&self) -> bool {
+        match self {
+            Self::Local(_) => true,
+            Self::Network { tor, .. } => tor.is_healthy(),
         }
     }
 }
@@ -227,9 +319,10 @@ struct SendMessageResponse {
 
 #[derive(Clone, Debug, Serialize)]
 struct AppStatus {
-    /// `ready` means Tor is bootstrapped, not merely authenticated.
+    /// `ready` means the private transport is bootstrapped; `stopped` means
+    /// the Android-owned runtime is available to start for the first room.
     status: String,
-    /// `available`, `connecting`, `unavailable`, or `disabled` for local dev.
+    /// Internal transport state; the consumer UI exposes plain-language labels.
     tor: String,
     transport: String,
     connection_state: String,
@@ -237,7 +330,10 @@ struct AppStatus {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn app_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
+async fn app_status<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+) -> Result<AppStatus, String> {
     let lease = match InFlightLease::acquire(&state.status_check_in_flight) {
         Ok(lease) => lease,
         Err(_) => return Ok(status_check_in_progress()),
@@ -245,7 +341,15 @@ async fn app_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
 
     tauri::async_runtime::spawn_blocking(move || {
         let _lease = lease;
-        status_blocking()
+        #[cfg(target_os = "android")]
+        {
+            android_status(&app)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = app;
+            status_blocking()
+        }
     })
     .await
     .map_err(|_| "Tor status check failed".to_string())
@@ -268,6 +372,10 @@ async fn create_room<R: Runtime>(
         // finish, even if the IPC future is cancelled or its window disappears.
         let _operation = operation;
         prepare_new_room(&shared)?;
+        #[cfg(target_os = "android")]
+        let ready =
+            create_room_blocking_android(&app, SessionConfig::default(), room_name, display_name)?;
+        #[cfg(not(target_os = "android"))]
         let ready = create_room_blocking(SessionConfig::default(), room_name, display_name)?;
         install_room(&shared, &app, ready, SessionConfig::default())
     })
@@ -291,6 +399,10 @@ async fn join_room<R: Runtime>(
     tauri::async_runtime::spawn_blocking(move || {
         let _operation = operation;
         prepare_new_room(&shared)?;
+        #[cfg(target_os = "android")]
+        let ready =
+            join_room_blocking_android(&app, SessionConfig::default(), invite_code, display_name)?;
+        #[cfg(not(target_os = "android"))]
         let ready = join_room_blocking(SessionConfig::default(), invite_code, display_name)?;
         install_room(&shared, &app, ready, SessionConfig::default())
     })
@@ -480,6 +592,7 @@ async fn end_session<R: Runtime>(
     .map_err(|_| "session shutdown task failed".to_string())?
 }
 
+#[cfg(not(target_os = "android"))]
 fn create_room_blocking(
     config: SessionConfig,
     room_name: Option<String>,
@@ -508,13 +621,17 @@ fn create_room_blocking(
         .map_err(|error| error.to_string())?;
     let snapshot = room.snapshot().map_err(|error| error.to_string())?;
     Ok(RoomReady {
-        room: ActiveRoom::Network(room),
+        room: ActiveRoom::Network {
+            room,
+            tor: TorLease::none(),
+        },
         snapshot,
         current_participant: None,
         is_creator: true,
     })
 }
 
+#[cfg(not(target_os = "android"))]
 fn join_room_blocking(
     config: SessionConfig,
     invite_code: String,
@@ -535,7 +652,76 @@ fn join_room_blocking(
         .map_err(|error| error.to_string())?;
     let snapshot = room.snapshot().map_err(|error| error.to_string())?;
     Ok(RoomReady {
-        room: ActiveRoom::Network(room),
+        room: ActiveRoom::Network {
+            room,
+            tor: TorLease::none(),
+        },
+        snapshot,
+        current_participant: None,
+        is_creator: false,
+    })
+}
+
+#[cfg(target_os = "android")]
+fn create_room_blocking_android<R: Runtime>(
+    app: &AppHandle<R>,
+    config: SessionConfig,
+    room_name: Option<String>,
+    display_name: String,
+) -> Result<RoomReady, String> {
+    validate_display_name(&display_name)?;
+    validate_room_name(room_name.as_deref())?;
+    ensure_transport_allowed()?;
+    if local_transport_enabled() {
+        let room = LocalRoom::create(config, room_name, &display_name)
+            .map_err(|error| error.to_string())?;
+        let participant = room.creator_id();
+        let snapshot = room
+            .snapshot(&participant)
+            .map_err(|error| error.to_string())?;
+        return Ok(RoomReady {
+            room: ActiveRoom::Local(Arc::new(Mutex::new(room))),
+            snapshot,
+            current_participant: Some(participant),
+            is_creator: true,
+        });
+    }
+
+    let (tor, lease) = android_tor::acquire(app)?;
+    let room = NetworkRoom::create_with_tor(config, tor, room_name, &display_name)
+        .map_err(|error| error.to_string())?;
+    let snapshot = room.snapshot().map_err(|error| error.to_string())?;
+    Ok(RoomReady {
+        room: ActiveRoom::Network { room, tor: lease },
+        snapshot,
+        current_participant: None,
+        is_creator: true,
+    })
+}
+
+#[cfg(target_os = "android")]
+fn join_room_blocking_android<R: Runtime>(
+    app: &AppHandle<R>,
+    config: SessionConfig,
+    invite_code: String,
+    display_name: String,
+) -> Result<RoomReady, String> {
+    validate_display_name(&display_name)?;
+    ensure_transport_allowed()?;
+    if local_transport_enabled() {
+        return Err(
+            "local development transport is host-only; unset GHOSTCHAT_TRANSPORT=local before joining"
+                .to_string(),
+        );
+    }
+    let invite_code = validate_invitation_text(&invite_code)?.to_string();
+    let invitation = TorInvitation::decode_code(&invite_code).map_err(|error| error.to_string())?;
+    let (tor, lease) = android_tor::acquire(app)?;
+    let room = NetworkRoom::join_with_tor(invitation, config, tor, &display_name)
+        .map_err(|error| error.to_string())?;
+    let snapshot = room.snapshot().map_err(|error| error.to_string())?;
+    Ok(RoomReady {
+        room: ActiveRoom::Network { room, tor: lease },
         snapshot,
         current_participant: None,
         is_creator: false,
@@ -813,7 +999,7 @@ fn start_scheduler<R: Runtime>(
                 }
                 drop(stopped);
 
-                let (Some(room), participant, Some(session_id)) =
+                let (Some(mut room), participant, Some(session_id)) =
                     (match clone_active_for_pump(&shared) {
                         Ok(value) => value,
                         Err(_) => break,
@@ -821,6 +1007,21 @@ fn start_scheduler<R: Runtime>(
                 else {
                     continue;
                 };
+
+                if !room.runtime_healthy() {
+                    let _ = room.shutdown();
+                    emit_session_error(&app, &session_id, "Tor runtime stopped");
+                    if let Ok(snapshot) = room.snapshot(participant.as_ref()) {
+                        emit_session_event(
+                            &app,
+                            "ghostchat://session-state",
+                            &session_id,
+                            &snapshot,
+                        );
+                    }
+                    release_terminal_room(&shared, &session_id);
+                    break;
+                }
 
                 match room.poll() {
                     Ok(events) => emit_network_events(&app, &session_id, events),
@@ -1065,6 +1266,7 @@ fn emit_session_event<R: Runtime, T: Serialize>(
     );
 }
 
+#[cfg(not(target_os = "android"))]
 fn status_blocking() -> AppStatus {
     if local_transport_requested() && !local_transport_enabled() {
         return unavailable_status("local transport is disabled in release builds");
@@ -1106,6 +1308,48 @@ fn status_blocking() -> AppStatus {
             transport: "tor-only".to_string(),
             connection_state: "waiting".to_string(),
             bootstrap_progress: Some(progress),
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_status<R: Runtime>(app: &AppHandle<R>) -> AppStatus {
+    if local_transport_requested() && !local_transport_enabled() {
+        return unavailable_status("local transport is disabled in release builds");
+    }
+    if local_transport_enabled() {
+        return AppStatus {
+            status: "ready".to_string(),
+            tor: "disabled".to_string(),
+            transport: "local-development".to_string(),
+            connection_state: "ready".to_string(),
+            bootstrap_progress: None,
+        };
+    }
+    match android_tor::status(app) {
+        android_tor::AndroidTorStatus::Stopped => AppStatus {
+            status: "stopped".to_string(),
+            tor: "stopped".to_string(),
+            transport: "tor-only".to_string(),
+            connection_state: "stopped".to_string(),
+            bootstrap_progress: None,
+        },
+        android_tor::AndroidTorStatus::Ready(progress) => AppStatus {
+            status: "ready".to_string(),
+            tor: "available".to_string(),
+            transport: "tor-onion-service".to_string(),
+            connection_state: "ready".to_string(),
+            bootstrap_progress: Some(progress),
+        },
+        android_tor::AndroidTorStatus::Starting(progress) => AppStatus {
+            status: "connecting".to_string(),
+            tor: "connecting".to_string(),
+            transport: "tor-only".to_string(),
+            connection_state: "starting".to_string(),
+            bootstrap_progress: progress,
+        },
+        android_tor::AndroidTorStatus::Unavailable => {
+            unavailable_status("managed Android Tor runtime unavailable")
         }
     }
 }
@@ -1342,26 +1586,29 @@ fn is_app_navigation(url: &tauri::Url) -> bool {
 }
 
 fn configure_app<R: Runtime>(builder: tauri::Builder<R>, state: AppState) -> tauri::Builder<R> {
-    builder
-        .manage(state)
-        .plugin(
-            tauri::plugin::Builder::<R>::new("local-navigation")
-                .on_navigation(|_, url| is_app_navigation(url))
-                .build(),
-        )
-        .invoke_handler(tauri::generate_handler![
-            app_status,
-            create_room,
-            join_room,
-            get_session_snapshot,
-            send_message,
-            advance_epoch,
-            remove_participant,
-            shutdown_session,
-            leave_session
-        ])
+    let builder = builder.manage(state).plugin(
+        tauri::plugin::Builder::<R>::new("local-navigation")
+            .on_navigation(|_, url| is_app_navigation(url))
+            .build(),
+    );
+
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_tor::plugin());
+
+    builder.invoke_handler(tauri::generate_handler![
+        app_status,
+        create_room,
+        join_room,
+        get_session_snapshot,
+        send_message,
+        advance_epoch,
+        remove_participant,
+        shutdown_session,
+        leave_session
+    ])
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = AppState::default();
     let exit_shared = state.shared.clone();

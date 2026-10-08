@@ -24,7 +24,10 @@
     runtimeChip: $("#runtime-chip"),
     runtimeDot: $("#runtime-dot"),
     runtimeLabel: $("#runtime-label"),
+    runtimeProgress: $("#runtime-progress"),
     previewBanner: $("#preview-banner"),
+    startupLoading: $("#startup-loading"),
+    startupLoadingText: $("#startup-loading-text"),
     notice: $("#notice"),
     noticeMark: $("#notice-mark"),
     noticeText: $("#notice-text"),
@@ -47,19 +50,17 @@
     roomParticipantsList: $("#room-participants-list"),
     roomEmptyParticipants: $("#room-empty-participants"),
     roomSessionState: $("#room-session-state"),
-    roomEpoch: $("#room-epoch"),
     roomTransport: $("#room-transport"),
     roomConnectionState: $("#room-connection-state"),
     roomTorState: $("#room-tor-state"),
     roomEncryptionState: $("#room-encryption-state"),
-    roomAdvanceEpoch: $("#room-advance-epoch"),
     roomShutdown: $("#room-shutdown"),
     roomEnterChat: $("#room-enter-chat"),
     chatBackRoom: $("#chat-back-room"),
     chatTitle: $("#chat-title"),
     chatStateDot: $("#chat-state-dot"),
     chatStateLabel: $("#chat-state-label"),
-    chatEpochLabel: $("#chat-epoch-label"),
+    chatSessionLabel: $("#chat-session-label"),
     chatRoomDetails: $("#chat-room-details"),
     chatShutdown: $("#chat-shutdown"),
     chatParticipantCount: $("#chat-participant-count"),
@@ -78,6 +79,15 @@
     sidebarRoomName: $("#sidebar-room-name"),
     sidebarRoomDot: $("#sidebar-room-dot"),
     sidebarRoomState: $("#sidebar-room-state"),
+    settingsButton: $("#settings-button"),
+    homeOnboarding: $("#home-onboarding"),
+    themeSystem: $("#theme-system"),
+    themeDark: $("#theme-dark"),
+    themeLight: $("#theme-light"),
+    themeStatus: $("#theme-status"),
+    motionStatus: $("#motion-status"),
+    roomCodeStatus: $("#room-code-status"),
+    roomLoadingCopy: $("#room-loading-copy"),
   };
 
   const app = {
@@ -103,6 +113,7 @@
     listeners: [],
     statusCheckInFlight: false,
     statusTimer: null,
+    theme: "system",
   };
 
   function text(value, fallback = "") {
@@ -171,6 +182,24 @@
     if (elements.notice) elements.notice.hidden = true;
   }
 
+  function setFieldError(input, errorId, message) {
+    if (!input) return;
+    const error = document.querySelector(`#${errorId}`);
+    input.classList.toggle("has-error", Boolean(message));
+    input.setAttribute("aria-invalid", message ? "true" : "false");
+    if (error) {
+      error.textContent = message || "";
+      error.hidden = !message;
+    }
+  }
+
+  function clearFormErrors() {
+    setFieldError(elements.createName, "create-name-error", "");
+    setFieldError(elements.createRoomName, "create-room-name-error", "");
+    setFieldError(elements.joinName, "join-name-error", "");
+    setFieldError(elements.inviteCode, "invite-code-error", "");
+  }
+
   function humanizeError(error, fallback) {
     const raw = text(error?.message || error?.error || error, "").toLowerCase();
     if (raw.includes("room is full") || raw.includes("participant limit")) {
@@ -195,13 +224,13 @@
       return "Delivery status is unknown. Check the room before sending again to avoid a duplicate.";
     }
     if (raw.includes("ipc") || raw.includes("desktop context") || raw.includes("core unavailable")) {
-      return "GhostChat's desktop connection is unavailable. Restart the app before using room actions.";
+      return "GhostChat's app connection is unavailable. Restart the app before using room actions.";
     }
     if (raw.includes("welcome") || raw.includes("connecting") || raw.includes("bootstrap")) {
-      return "The secure room is still connecting through Tor. Wait for the Welcome or start a fresh join.";
+      return "The private connection is still starting. Wait for the room to connect, or try joining again.";
     }
     if (raw.includes("tor") || raw.includes("onion")) {
-      return "Tor is unavailable or not bootstrapped. Start Tor and refresh its status before trying again.";
+      return "The private connection is unavailable. Try again in a moment.";
     }
     if (raw.includes("invite") || raw.includes("code") || raw.includes("room")) {
       return "That room could not be reached. Check the invite code and try again.";
@@ -209,27 +238,131 @@
     return fallback;
   }
 
-  function setRuntimeStatus(kind, label) {
-    elements.runtimeChip.classList.remove("is-ready", "is-browser", "is-connecting", "is-error");
-    elements.runtimeDot.classList.remove("is-ready", "is-browser", "is-connecting", "is-error");
+  function setRuntimeStatus(kind, label, progress = null) {
+    elements.runtimeChip.classList.remove("is-ready", "is-browser", "is-connecting", "is-idle", "is-error");
+    elements.runtimeDot.classList.remove("is-ready", "is-browser", "is-connecting", "is-idle", "is-error");
     elements.runtimeChip.classList.add(`is-${kind}`);
     elements.runtimeDot.classList.add(`is-${kind}`);
     setText(elements.runtimeLabel, label);
+    const value = numberOrNull(progress);
+    const showProgress = kind === "connecting" && value !== null;
+    if (elements.runtimeProgress) {
+      elements.runtimeProgress.hidden = !showProgress;
+      if (showProgress) {
+        const bounded = Math.max(0, Math.min(100, Math.round(value)));
+        elements.runtimeProgress.value = bounded;
+        elements.runtimeProgress.setAttribute("aria-valuenow", String(bounded));
+        elements.runtimeProgress.setAttribute("aria-valuetext", `${bounded}% of private connection setup`);
+      }
+    }
   }
 
-  function showScreen(screen) {
-    const next = ["home", "create", "join", "room", "chat"].includes(screen) ? screen : "home";
+  function setStatusPolling(intervalMs) {
+    if (app.statusTimer !== null) window.clearInterval(app.statusTimer);
+    app.statusTimer = window.setInterval(() => { void checkCoreStatus(); }, intervalMs);
+  }
+
+  function beginPrivateStartup() {
+    if (app.runtime !== "tauri") return;
+    setRuntimeStatus("connecting", "Starting private connection…");
+    setStatusPolling(1_000);
+  }
+
+  function finishPrivateStartup() {
+    if (app.runtime !== "tauri") return;
+    setStatusPolling(15_000);
+    void checkCoreStatus();
+  }
+
+  function setStartupLoading(visible, message = "Checking GhostChat connection…") {
+    if (!elements.startupLoading) return;
+    elements.startupLoading.hidden = !visible;
+    setText(elements.startupLoadingText, message);
+  }
+
+  function setTheme(theme) {
+    const next = ["system", "dark", "light"].includes(theme) ? theme : "system";
+    app.theme = next;
+    const root = document.documentElement;
+    if (root) {
+      root.dataset.theme = next;
+    }
+    const buttons = [
+      [elements.themeSystem, "system"],
+      [elements.themeDark, "dark"],
+      [elements.themeLight, "light"],
+    ];
+    buttons.forEach(([button, value]) => {
+      if (!button) return;
+      const selected = value === next;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    setText(elements.themeStatus, `${next[0].toUpperCase()}${next.slice(1)} theme selected. Preferences reset when this window closes.`);
+  }
+
+  function updateMotionStatus() {
+    if (!elements.motionStatus) return;
+    const reduced = typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setText(elements.motionStatus, reduced ? "Reduced motion is enabled" : "Following your device preference");
+  }
+
+  function writeScreenHistory(screen, mode = "push") {
+    const history = window.history;
+    if (!history || mode === "none") return;
+    try {
+      const state = { ghostChatScreen: screen };
+      if (mode === "replace" && typeof history.replaceState === "function") {
+        history.replaceState(state, "", `#${screen}`);
+      } else if (mode === "push" && typeof history.pushState === "function") {
+        history.pushState(state, "", `#${screen}`);
+      }
+    } catch {
+      // Screen navigation must remain usable if a host blocks history updates.
+    }
+  }
+
+  function initializeScreenHistory() {
+    writeScreenHistory("home", "replace");
+    window.addEventListener("popstate", handleBackNavigation);
+  }
+
+  function showScreen(screen, { historyMode = "push" } = {}) {
+    const next = ["home", "onboarding", "create", "join", "room", "chat", "settings", "privacy", "security", "about"].includes(screen) ? screen : "home";
+    if (next !== app.screen) writeScreenHistory(next, historyMode);
     app.screen = next;
     $$('[data-screen]').forEach((section) => {
       section.hidden = section.dataset.screen !== next;
     });
     $$('[data-go]').forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.go === next || (next === "room" && button.dataset.go === "home"));
+      button.classList.toggle("is-active", button.dataset.go === next || (["room", "chat"].includes(next) && button.dataset.go === "home"));
     });
     if (next === "room") renderRoom();
     if (next === "chat") renderChat();
     if (next === "create") window.setTimeout(() => elements.createName?.focus(), 0);
     if (next === "join") window.setTimeout(() => elements.joinName?.focus(), 0);
+    if (["onboarding", "settings", "privacy", "security", "about"].includes(next)) {
+      window.setTimeout(() => document.querySelector(`[data-screen="${next}"] h2`)?.focus?.(), 0);
+    }
+  }
+
+  function handleBackNavigation() {
+    if (app.screen === "chat") {
+      app.returnToChat = false;
+      showScreen("room", { historyMode: "none" });
+    } else if (app.screen === "room") {
+      app.returnToChat = false;
+      showScreen("home", { historyMode: "none" });
+    } else if (["create", "join", "onboarding"].includes(app.screen)) {
+      showScreen("home", { historyMode: "none" });
+    } else if (["privacy", "security"].includes(app.screen)) {
+      showScreen("settings", { historyMode: "none" });
+    } else if (["settings", "about"].includes(app.screen)) {
+      showScreen("home", { historyMode: "none" });
+    } else {
+      void window.__TAURI__?.app?.exit?.(0);
+    }
   }
 
   function normaliseParticipant(value, index = 0) {
@@ -478,15 +611,16 @@
   }
 
   function waitingLabel() {
-    if (app.runtime === "unavailable") return "Desktop connection unavailable";
-    if (app.coreState === "unavailable") return "Tor unavailable";
-    if (["checking", "connecting", "waiting"].includes(app.coreState)) return "Waiting for Tor";
-    return waitingForConfirmation() ? "Awaiting creator confirmation" : "Waiting for Welcome";
+    if (app.runtime === "unavailable") return "App connection unavailable";
+    if (app.coreState === "unavailable") return "Private connection unavailable";
+    if (app.coreState === "stopped") return "Starting private connection…";
+    if (["checking", "connecting", "waiting"].includes(app.coreState)) return "Connecting securely…";
+    return waitingForConfirmation() ? "Waiting for room owner…" : "Securing room…";
   }
 
   function updateRoomStartAvailability() {
     const allowed = !app.newRoomPending && (app.runtime === "browser" || (
-      app.runtime === "tauri" && app.eventsReady && app.coreState === "ready"
+      app.runtime === "tauri" && app.eventsReady && ["ready", "stopped"].includes(app.coreState)
     ));
     elements.createSubmit.disabled = !allowed;
     elements.joinSubmit.disabled = !allowed;
@@ -501,8 +635,8 @@
       setNotice("info", "Leave or end the current room before starting another.");
       return false;
     }
-    if (app.runtime === "unavailable" || (app.runtime === "tauri" && (!app.eventsReady || app.coreState !== "ready"))) {
-      setNotice("error", "The desktop core and Tor must be ready before starting a room.");
+    if (app.runtime === "unavailable" || (app.runtime === "tauri" && (!app.eventsReady || !["ready", "stopped"].includes(app.coreState)))) {
+      setNotice("error", "GhostChat is still getting ready. Try again in a moment.");
       return false;
     }
     return true;
@@ -526,12 +660,19 @@
         ? "Open the local preview; messages remain disabled"
         : canOpenChat
           ? "Open the encrypted chat"
-          : "Chat unlocks after the authenticated Welcome and creator confirmation";
+          : "Chat opens when the room is secure and the owner approves your join";
     }
-    if (elements.roomAdvanceEpoch) {
-      elements.roomAdvanceEpoch.hidden = !owner;
-      elements.roomAdvanceEpoch.disabled = !owner || !chatReady();
-    }
+  }
+
+  function connectionLabel(value, fallback = "Checking") {
+    const state = text(value, "").trim().toLowerCase();
+    if (!state) return fallback;
+    if (["ready", "available", "connected", "active", "established", "running"].includes(state)) return "Ready";
+    if (["stopped", "starting", "checking", "connecting", "waiting", "bootstrap"].some((part) => state.includes(part))) return "Connecting securely…";
+    if (["unavailable", "error", "failed"].some((part) => state.includes(part))) return "Unavailable";
+    if (isTerminalState(state)) return "Ended";
+    if (["tor-onion-service", "tor-only", "tor"].includes(state)) return "Private connection";
+    return fallback;
   }
 
   function renderRoom() {
@@ -544,11 +685,12 @@
     setText(elements.roomTitle, roomName);
     setText(elements.roomWelcomeName, roomName);
     setText(elements.roomCode, code);
+    setText(elements.roomCodeStatus, app.room.inviteCode ? "Invite code is available to copy." : "Invite code is not available yet.");
     setText(elements.roomSessionState, preview ? "Preview" : torUnavailable ? "Paused" : sessionLabel(app.sessionState));
-    setText(elements.roomEpoch, app.epoch === null ? "—" : app.epoch);
-    setText(elements.roomTransport, app.room.transport || app.transport || (app.runtime === "tauri" ? "Tor" : preview ? "Browser preview" : "Unavailable"));
-    setText(elements.roomConnectionState, app.room.connectionState || sessionLabel(app.sessionState));
-    setText(elements.roomTorState, preview ? "Preview" : torUnavailable ? "Unavailable" : app.room.torState || "Checking");
+    const transport = text(app.room.transport || app.transport, "").toLowerCase();
+    setText(elements.roomTransport, preview ? "Browser preview" : transport === "local-development" ? "Local preview" : torUnavailable ? "Unavailable" : "Private connection");
+    setText(elements.roomConnectionState, connectionLabel(app.room.connectionState, sessionLabel(app.sessionState)));
+    setText(elements.roomTorState, preview ? "Preview" : torUnavailable ? "Unavailable" : connectionLabel(app.room.torState || app.coreState));
     setText(elements.roomEncryptionState, closed
       ? "Ended"
       : preview
@@ -557,19 +699,24 @@
           ? "Unavailable"
         : chatReady()
           ? "Active"
-          : waitingForConfirmation() ? "Welcome verified · confirmation pending" : "MLS Welcome pending");
+      : waitingForConfirmation() ? "Invite checked · waiting for the room owner" : "Checking your invitation");
     setText(elements.roomWelcomeCopy, closed
       ? "This session has ended. Start or join a fresh room to continue."
       : torUnavailable
-        ? "Tor is unavailable. Start Tor and refresh its status before trying again."
+        ? "The private connection is unavailable. Try starting a fresh room in a moment."
       : preview
         ? "This is a local browser preview. The room is simulated for interface exploration; preview messages are not encrypted or sent anywhere."
       : app.transport === "local-development"
         ? "Local development transport is enabled explicitly. This host-only room never connects to other devices."
       : chatReady()
-        ? isCreator() ? "Room keys are ready. Share the invite privately; each join is activated after authenticated confirmation." : "The Welcome is verified and creator confirmation received. Encrypted chat is ready."
-        : waitingForConfirmation() ? "The Welcome is verified. Chat remains locked until the creator confirms this join."
-        : "The room is connecting through Tor. Chat unlocks after the authenticated Welcome and creator confirmation.");
+        ? isCreator() ? "Your room is ready. Share the invite privately; new members can join after you approve them." : "You’re connected. The private room is ready for chat."
+        : waitingForConfirmation() ? "Your invitation is checked. Chat opens after the room owner approves your join."
+        : "Securing the room. Chat opens after setup and owner approval.");
+    if (elements.roomLoadingCopy) {
+      const loading = !closed && !preview && !chatReady();
+      elements.roomLoadingCopy.hidden = !loading;
+      setText(elements.roomLoadingCopy, loading ? waitingLabel() : "");
+    }
     renderParticipantList(elements.roomParticipantsList, elements.roomEmptyParticipants, elements.roomParticipantCount);
     elements.roomBackAction.textContent = app.returnToChat ? "← Back to chat" : "← Back to rooms";
     setRoomActionLabels();
@@ -635,13 +782,13 @@
     setText(elements.chatStateLabel, closed
       ? "Session ended"
       : torUnavailable
-        ? "Tor unavailable"
+        ? "Private connection unavailable"
       : preview
         ? "Browser preview · not encrypted"
         : ready
           ? "Encrypted session active"
           : waitingLabel());
-    setText(elements.chatEpochLabel, `Epoch ${app.epoch === null ? "—" : app.epoch}`);
+    setText(elements.chatSessionLabel, ready ? "Encrypted session" : "Securing room…");
     setText(elements.chatInviteCode, app.room.inviteCode || "Invite unavailable");
     renderParticipantList(elements.chatParticipantsList, elements.chatEmptyParticipants, elements.chatParticipantCount);
     elements.chatStateDot.className = `status-dot ${closed || torUnavailable ? "is-error" : ready ? app.runtime === "tauri" ? "is-ready" : "is-browser" : "is-connecting"}`;
@@ -650,7 +797,7 @@
       setText(elements.messageListHint, closed
         ? "Session ended · messages cleared"
         : torUnavailable
-          ? "Tor is unavailable · messages locked"
+          ? "Private connection unavailable · messages locked"
         : preview
           ? "Preview only · messages are not encrypted"
           : ready
@@ -662,7 +809,7 @@
       setText(elements.composerState, closed
         ? "Session ended. Start a fresh room."
         : torUnavailable
-          ? "Tor is unavailable. Start Tor before sending messages."
+          ? "The private connection is unavailable. Try again before sending messages."
         : app.sendPending
           ? "Sending… delivery status may be unknown if the connection closes."
         : app.lastSendState === "unknown"
@@ -673,7 +820,7 @@
           ? "Preview mode: message sending is disabled."
           : ready
             ? "Messages are held for this session; close it when you are finished."
-            : "Chat unlocks after the Welcome and creator confirmation.");
+            : "Chat opens after secure setup and room owner approval.");
     }
     elements.composer?.classList.toggle("is-locked", !ready);
     elements.messageInput.disabled = !ready || app.sendPending;
@@ -743,22 +890,27 @@
   async function createRoom(event) {
     event.preventDefault();
     if (!canStartRoom()) return;
+    clearFormErrors();
     const name = elements.createName.value.trim();
     const roomName = elements.createRoomName.value.trim();
     const validation = validateDisplayName(name);
     if (validation) {
+      setFieldError(elements.createName, "create-name-error", validation);
       setNotice("error", validation);
       elements.createName.focus();
       return;
     }
     const roomValidation = validateRoomName(roomName);
     if (roomValidation) {
+      setFieldError(elements.createRoomName, "create-room-name-error", roomValidation);
       setNotice("error", roomValidation);
       elements.createRoomName.focus();
       return;
     }
     setBusy(elements.createSubmit, true);
+    setText(elements.createSubmit.querySelector(".button-label"), "Creating secure room…");
     app.newRoomPending = true;
+    beginPrivateStartup();
     updateRoomStartAvailability();
     clearNotice();
     try {
@@ -790,6 +942,8 @@
     } finally {
       app.newRoomPending = false;
       setBusy(elements.createSubmit, false);
+      setText(elements.createSubmit.querySelector(".button-label"), "Create room");
+      finishPrivateStartup();
       updateRoomStartAvailability();
     }
   }
@@ -797,22 +951,27 @@
   async function joinRoom(event) {
     event.preventDefault();
     if (!canStartRoom()) return;
+    clearFormErrors();
     const name = elements.joinName.value.trim();
     const inviteCode = elements.inviteCode.value.trim();
     const nameValidation = validateDisplayName(name);
     if (nameValidation) {
+      setFieldError(elements.joinName, "join-name-error", nameValidation);
       setNotice("error", nameValidation);
       elements.joinName.focus();
       return;
     }
     const inviteValidation = validateInviteCode(inviteCode);
     if (inviteValidation) {
+      setFieldError(elements.inviteCode, "invite-code-error", inviteValidation);
       setNotice("error", inviteValidation);
       elements.inviteCode.focus();
       return;
     }
     setBusy(elements.joinSubmit, true);
+    setText(elements.joinSubmit.querySelector(".button-label"), "Joining securely…");
     app.newRoomPending = true;
+    beginPrivateStartup();
     updateRoomStartAvailability();
     clearNotice();
     try {
@@ -830,7 +989,7 @@
       if (!app.room) throw new Error("desktop session snapshot unavailable");
       app.returnToChat = false;
       showScreen("room");
-      setNotice("info", "Join started. Chat unlocks after the authenticated Welcome and creator confirmation.");
+      setNotice("info", "Join request sent. Chat opens after the room owner approves you.");
       await refreshSnapshot(true);
     } catch (error) {
       // A failed Welcome is terminal for this join attempt. Keep no client
@@ -844,6 +1003,8 @@
     } finally {
       app.newRoomPending = false;
       setBusy(elements.joinSubmit, false);
+      setText(elements.joinSubmit.querySelector(".button-label"), "Join room");
+      finishPrivateStartup();
       updateRoomStartAvailability();
     }
   }
@@ -873,7 +1034,7 @@
         "info",
         app.runtime === "browser"
           ? "Browser preview messages are disabled because the preview is not encrypted."
-          : "Chat is locked until the authenticated MLS Welcome is ready. Start a fresh join if this room cannot connect.",
+          : "Chat is locked until the room invite is verified and the owner confirms the join. Start a fresh join if this room cannot connect.",
       );
       return;
     }
@@ -942,6 +1103,12 @@
     elements.messageList.textContent = "";
     elements.roomParticipantsList.textContent = "";
     elements.chatParticipantsList.textContent = "";
+    setText(elements.roomCodeStatus, "");
+    if (elements.roomLoadingCopy) {
+      elements.roomLoadingCopy.hidden = true;
+      setText(elements.roomLoadingCopy, "");
+    }
+    clearFormErrors();
     [elements.roomCode, elements.chatInviteCode, elements.roomTitle, elements.chatTitle,
       elements.roomWelcomeName, elements.sidebarRoomName].forEach((element) => setText(element, ""));
     [elements.createName, elements.createRoomName, elements.joinName, elements.inviteCode].forEach((element) => {
@@ -971,31 +1138,6 @@
       setNotice("success", `${participant.name} was removed from the room.`);
     } catch (error) {
       setNotice("error", humanizeError(error, "GhostChat could not remove that participant."));
-    }
-  }
-
-  async function advanceEpoch() {
-    if (!app.room || !isCreator() || isSessionClosed()) return;
-    if (!invoke) {
-      app.epoch = (app.epoch ?? 0) + 1;
-      app.room.epoch = app.epoch;
-      renderRoom();
-      renderChat();
-      setNotice("info", `Browser preview: simulated MLS epoch ${app.epoch}.`);
-      return;
-    }
-    setBusy(elements.roomAdvanceEpoch, true);
-    const requestedSessionId = app.room.sessionId;
-    try {
-      const result = await invoke("advance_epoch", sessionArgs());
-      if (!app.room || app.room.sessionId !== requestedSessionId) return;
-      applySessionPayload(result);
-      setNotice("success", `MLS epoch advanced to ${app.epoch}.`);
-    } catch (error) {
-      setNotice("error", humanizeError(error, "GhostChat could not rotate the room keys."));
-    } finally {
-      setBusy(elements.roomAdvanceEpoch, false);
-      setRoomActionLabels();
     }
   }
 
@@ -1131,26 +1273,48 @@
     app.eventsReady = true;
   }
 
+  async function registerAndroidBackHandler() {
+    const appApi = window.__TAURI__?.app;
+    if (typeof appApi?.onBackButtonPress !== "function") return;
+    try {
+      const listener = await appApi.onBackButtonPress(({ canGoBack = false } = {}) => {
+        if (canGoBack && typeof window.history?.back === "function") {
+          window.history.back();
+          return;
+        }
+        handleBackNavigation();
+      });
+      if (typeof listener?.unregister === "function") {
+        app.listeners.push(() => listener.unregister());
+      }
+    } catch {
+      // If Android does not expose back-button handling, retain its native behavior.
+    }
+  }
+
   function bindNavigation() {
     $$('[data-go]').forEach((button) => {
       button.addEventListener("click", () => {
         clearNotice();
-        showScreen(button.dataset.go);
+        showScreen(button.dataset.go, {
+          historyMode: button.dataset.history === "replace" ? "replace" : "push",
+        });
       });
     });
     $("#home-create").addEventListener("click", () => showScreen("create"));
     $("#home-join").addEventListener("click", () => showScreen("join"));
+    elements.homeOnboarding?.addEventListener("click", () => showScreen("onboarding"));
     elements.roomBackAction.addEventListener("click", () => {
       if (app.returnToChat) {
         app.returnToChat = false;
-        showScreen("chat");
+        showScreen("chat", { historyMode: "replace" });
       } else {
-        showScreen("home");
+        showScreen("home", { historyMode: "replace" });
       }
     });
     elements.roomEnterChat.addEventListener("click", async () => {
       if (!roomCanOpenChat()) {
-        setNotice("info", "Chat unlocks after the authenticated MLS Welcome is ready. No stale session will be reused.");
+        setNotice("info", "Chat unlocks after the invite is verified and the owner confirms the join. No old room is reused.");
         return;
       }
       app.returnToChat = false;
@@ -1160,12 +1324,13 @@
     });
     elements.chatBackRoom.addEventListener("click", () => {
       app.returnToChat = true;
-      showScreen("room");
+      showScreen("room", { historyMode: "replace" });
     });
     elements.chatRoomDetails.addEventListener("click", () => {
       app.returnToChat = true;
-      showScreen("room");
+      showScreen("room", { historyMode: "replace" });
     });
+    elements.settingsButton?.addEventListener("click", () => showScreen("settings"));
   }
 
   function bindForms() {
@@ -1178,17 +1343,27 @@
         elements.messageForm.requestSubmit();
       }
     });
+    [
+      [elements.createName, "create-name-error"],
+      [elements.createRoomName, "create-room-name-error"],
+      [elements.joinName, "join-name-error"],
+      [elements.inviteCode, "invite-code-error"],
+    ].forEach(([input, errorId]) => input?.addEventListener("input", () => setFieldError(input, errorId, "")));
   }
 
   function bindActions() {
     elements.copyInvite.addEventListener("click", copyInvite);
-    elements.roomAdvanceEpoch.addEventListener("click", advanceEpoch);
     elements.roomShutdown.addEventListener("click", shutdownSession);
     elements.chatShutdown.addEventListener("click", shutdownSession);
     elements.noticeDismiss.addEventListener("click", clearNotice);
     $("#help-button").addEventListener("click", () => {
-      setNotice("info", "GhostChat rooms are temporary MLS sessions. Use an invite code to keep a room private.");
+      showScreen("about");
     });
+    [
+      [elements.themeSystem, "system"],
+      [elements.themeDark, "dark"],
+      [elements.themeLight, "light"],
+    ].forEach(([button, theme]) => button?.addEventListener("click", () => setTheme(theme)));
   }
 
   async function checkCoreStatus() {
@@ -1199,9 +1374,9 @@
         app.runtime = "unavailable";
         app.transport = "unavailable";
         app.coreState = "unavailable";
-        setRuntimeStatus("error", "Desktop connection unavailable");
+        setRuntimeStatus("error", "App connection unavailable");
         elements.previewBanner.hidden = true;
-        setNotice("error", "GhostChat could not connect its desktop core. Restart the app before using room actions.");
+        setNotice("error", "GhostChat could not connect its app core. Restart the app before using room actions.");
       } else {
         app.runtime = "browser";
         app.transport = "browser-preview";
@@ -1209,6 +1384,7 @@
         setRuntimeStatus("browser", "Browser preview");
         elements.previewBanner.hidden = false;
       }
+      setStartupLoading(false);
       app.statusCheckInFlight = false;
       updateRoomStartAvailability();
       return;
@@ -1219,15 +1395,26 @@
       const status = unwrap(result);
       const value = text(firstValue(status, ["status", "state"], typeof result === "string" ? result : "unavailable"), "unavailable").toLowerCase();
       const transport = text(firstValue(status, ["transport"], "tor-only"), "tor-only").toLowerCase();
+      const rawProgress = numberOrNull(firstValue(status, ["bootstrap_progress", "bootstrapProgress"], null));
+      const progress = rawProgress === null ? null : Math.max(0, Math.min(100, Math.round(rawProgress)));
       app.transport = transport;
       app.coreState = value;
-      const progress = numberOrNull(firstValue(status, ["bootstrap_progress", "bootstrapProgress"], null));
-      if (transport === "local-development" || value === "ready") {
-        setRuntimeStatus("ready", transport === "local-development" ? "Local development" : "Tor ready");
+      if (transport === "local-development") {
+        setRuntimeStatus("browser", "Local preview");
+      } else if (value === "ready") {
+        setRuntimeStatus("ready", "Private connection ready");
+      } else if (value === "stopped" && app.newRoomPending) {
+        setRuntimeStatus("connecting", "Starting private connection…");
+      } else if (value === "stopped") {
+        setRuntimeStatus("idle", "Private connection idle");
       } else if (value === "connecting" || value === "waiting") {
-        setRuntimeStatus("connecting", progress === null ? "Tor connecting" : `Tor connecting · ${progress}%`);
+        setRuntimeStatus(
+          "connecting",
+          progress === null ? "Starting private connection…" : `Connecting · ${progress}%`,
+          progress,
+        );
       } else {
-        setRuntimeStatus("error", "Tor unavailable");
+        setRuntimeStatus("error", "Private connection unavailable");
       }
     } catch {
       app.transport = "tor-only";
@@ -1235,6 +1422,7 @@
       setRuntimeStatus("error", "Core unavailable");
       setNotice("error", "GhostChat could not reach the local core. Room actions may be unavailable.");
     } finally {
+      setStartupLoading(false);
       app.statusCheckInFlight = false;
       updateRoomStartAvailability();
       renderRoom();
@@ -1246,11 +1434,15 @@
     bindNavigation();
     bindForms();
     bindActions();
+    setTheme("system");
+    updateMotionStatus();
+    initializeScreenHistory();
     showScreen("home");
     updateRoomStartAvailability();
     await subscribeToEvents();
+    await registerAndroidBackHandler();
     await checkCoreStatus();
-    app.statusTimer = window.setInterval(() => checkCoreStatus(), 15_000);
+    setStatusPolling(15_000);
     window.addEventListener("beforeunload", () => {
       app.listeners.splice(0).forEach((unlisten) => {
         try {
@@ -1269,6 +1461,7 @@
     app.coreState = "unavailable";
     updateRoomStartAvailability();
     setRuntimeStatus("error", "UI unavailable");
+    setStartupLoading(false);
     setNotice("error", "GhostChat could not finish loading. Reload the window and try again.");
   });
 })();

@@ -1,10 +1,11 @@
 # GhostChat security and release-readiness review
 
-Review completed against the uncommitted working tree, October 3–4, 2026
+Review completed against the current working tree, October 3–4, 2026
 (Asia/Calcutta). This is an implementation review with executable regressions,
 not an independent pentest, cryptographic proof, or anonymity certification.
-The pre-existing networking milestone was preserved; Tor itself was not
-reconfigured. No changes were committed.
+The existing networking hardening commits were preserved; this audit did not
+create a commit or reconfigure Tor. Audit-only fuzz/report changes remain
+uncommitted.
 
 ## Scope and method
 
@@ -283,6 +284,137 @@ or High exploit was demonstrated by this review; that is not proof of absence.
 | Successful send presented without receipt distinction | Queued / delivery unconfirmed | Socket enqueue is not remote delivery |
 | "No trail" language | Session-scoped state plus explicit OS/clipboard limits | Avoid unsupported anonymity/erasure promises |
 
+## Confirmed vulnerabilities
+
+No new unremediated application vulnerability was confirmed in the current
+working tree. Historical confirmed findings F1–F7 were fixed or hardened and
+have deterministic regressions; no Critical or High exploit was demonstrated.
+F8 is an open transitive dependency unsoundness warning, not a demonstrated
+GhostChat exploit.
+
+## Potential weaknesses and hardening opportunities
+
+- **Open dependency risk:** RustSec still flags GLib 0.18.5 unsoundness and
+  eight unmaintained packages. A reviewed GTK/GLib migration or backport is
+  required for a higher-assurance release.
+- **Availability:** the creator is the relay and commit authority; an attacker
+  who knows the invitation can occupy bounded join/handshake capacity. There
+  is no failover or offline delivery.
+- **Bearer invitation model:** a member who retains the invitation can retry
+  with a fresh ephemeral identity after removal. The token is not a human
+  identity proof and is reusable until room shutdown.
+- **Privacy model:** Tor does not prevent traffic analysis, global timing
+  correlation, endpoint compromise, screenshots, clipboard retention, swap,
+  WebView/OS caches or telemetry.
+
+## Protocol/state-machine results
+
+Invalid outer controls, unsupported versions, malformed/truncated frames,
+duplicate Welcome/commit/application messages, future/old epochs, stale room
+events, unauthorized role transitions, concurrent joins, join timeouts and
+fresh-rejoin ordering were rejected, disconnected, or closed fail-closed in
+the exercised paths. The room deliberately has no owner failover; callers must
+drive `poll` for pending-phase expiry.
+
+## MLS security results
+
+OpenMLS performed signature, group, epoch, ratchet and ciphertext validation.
+GhostChat additionally enforced the three-member cap, invitation-bound group
+and creator identity, connection-to-MLS-sender binding, creator-only commits,
+authenticated owner controls and readiness gating. Replay and old-epoch
+application regressions passed. This is not MLS formal verification or a
+cryptographic proof.
+
+## Tor/network results
+
+SOCKS5 is loopback-only, uses onion-host requests, validates v3 checksum/version
+and rejects malformed replies. Control-port parsing has CRLF, line/count,
+aggregate-byte and total-deadline bounds; SAFECOOKIE server proof is verified.
+Adversarial local SOCKS/control fixtures and two opt-in real-Tor process tests
+passed. No clearnet fallback or direct peer destination path was found in the
+reviewed implementation.
+
+## DoS/resource-exhaustion results
+
+Envelope, invitation, frame, queue, connection, worker, message-history,
+control-reply, CLI-line and frontend-input bounds were exercised. Slow/partial
+readers, short writers, saturated queues, invalid joins and blocked cleanup
+were tested. Near-limit inputs still consume bounded CPU/memory, and a known
+invitation holder can cause availability pressure; no unbounded growth or
+crash was demonstrated.
+
+## Concurrency results
+
+Join serialization, removal crossing readiness, disconnect/message ordering,
+worker cleanup, saturated closure delivery, cancellation, blocked snapshots,
+stuck scheduler/locks and bounded desktop exit were exercised. No deadlock,
+task leak or state resurrection was reproduced in the tested scenarios.
+
+## Tauri/frontend results
+
+Commands validate bounded canonical inputs, session identity and creator role;
+release builds reject requested local transport. IPC cancellation and stale
+responses/events are scoped, navigation is restricted to the packaged origin,
+and rendering uses text nodes rather than HTML injection. Frontend tests and
+desktop/mobile browser smoke checks passed with zero console errors; a full
+three-native-WebView end-to-end test was not run.
+
+## Dependency/supply-chain results
+
+`cargo-audit 0.22.2` reported zero vulnerability-class advisories, one
+unsoundness warning (`RUSTSEC-2024-0429`, GLib 0.18.5), and eight unmaintained
+packages. No managed scanner or source upload was used. Duplicate crypto
+versions are inherited from OpenMLS and were not forcibly unified.
+
+## Static-analysis results
+
+Formatting, workspace check, tests and Clippy with `-D warnings` passed. The
+reviewed application source contains no unsafe blocks, shell/process command
+surface, arbitrary frontend URL navigation or application logging sink. The
+remaining `unwrap`/`expect` uses are in tests or after local invariant checks;
+the report does not treat that scan as a proof of panic-freedom.
+
+## AI red-team results
+
+Reasoning passes for malicious creator, joiner, existing member, compromised
+endpoint, network observer, local process, frontend input and Tor endpoint
+produced the bearer-invite, owner-availability, traffic-analysis and local
+compromise limits documented above. No additional reproducible authorization,
+confidentiality or integrity exploit was validated.
+
+## Fixed vulnerabilities and regression tests
+
+F1–F7 are documented with affected components, impact, remediation and test
+names above. Regression coverage includes decoder bounds, invitation tampering,
+MLS replay/order/capacity, authenticated controls, join deadlines/races,
+SOCKS/SAFECOOKIE/control limits, stream deadlines/queues/cleanup, subprocess
+failure paths, Tauri cancellation/stale sessions and frontend preview/send
+state. The audit-only fuzz harness is separate from production behavior.
+
+## Security assumptions
+
+The user verifies invitations out of band; the local OS, bundled WebView and
+Tor daemon are trusted; OpenMLS 0.9.0 and its configured ciphersuite provide
+their documented guarantees; participants can read/copy plaintext; and the
+threat model excludes a compromised endpoint or global traffic-analysis
+observer. Runtime cleanup is best effort, not forensic erasure.
+
+## What was not verified
+
+No independent pentest, Strix exploitation run, exhaustive fuzzing campaign,
+formal MLS proof, constant-time audit, isolated multi-daemon/device test,
+full native multi-window chat test, package installation/signing check, or
+macOS/Windows/AppImage build was completed. See the operational limitations
+below for the full release gaps.
+
+## Overall risk rating
+
+**Medium risk for a hardened prototype; not high-assurance release-ready.**
+The reviewed application boundaries have no demonstrated Critical/High issue,
+but the open GLib warning, owner/availability architecture, bearer-invite
+semantics, endpoint privacy limits and incomplete independent validation rule
+out a clean security sign-off.
+
 ## Privacy and anonymity assessment
 
 - **Network:** Tor hides direct peer IP addresses under its intended model.
@@ -342,6 +474,26 @@ or High exploit was demonstrated by this review; that is not proof of absence.
 9. Seeded decoder regressions and static review are not exhaustive fuzzing,
    constant-time proofs, MLS formal verification, or an OS-level telemetry audit.
 
+## Fuzzing results
+
+This audit also ran bounded local libFuzzer sessions with `cargo-fuzz 0.13.2`
+using the available Rust nightly toolchain (`rustc 1.101.0-nightly`). The first
+stable-toolchain invocation was rejected by cargo-fuzz because its sanitizer
+build uses nightly-only `-Z` flags; that failed build was not counted as a test
+result. The nightly runs completed without crashes, hangs, sanitizer findings,
+or crash artifacts:
+
+| Target | Harness | Seed corpus | Duration | Executions | Final coverage | Peak RSS |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| `fuzz_target_1` | Versioned/bounded `Envelope::decode` with valid envelope seeds and mutations | 130 files / 3,115 B | 30 s | 1,821,525 | 331 PCs / 439 features | 83 MiB |
+| `fuzz_session` | Length-prefixed stateful operation sequence into `SessionManager::receive_envelope_bytes` | 860 files / 55,891 B | 30 s | 33,691 | 4,621 PCs / 6,041 features | 195 MiB |
+
+These targets exercise decoder and session-operation boundaries, rather than
+claiming full coverage of room lifecycle, Tauri IPC, MLS formal state space, or
+the Tor daemon. Deterministic adversarial tests cover those additional
+boundaries; no continuous fuzzing campaign, coverage-guided Tor-control target,
+or independent pentest was performed.
+
 ## Files changed in this hardening pass
 
 - `Cargo.toml`, `Cargo.lock`, `app/src-tauri/Cargo.toml`: minimal dependencies,
@@ -362,6 +514,9 @@ or High exploit was demonstrated by this review; that is not proof of absence.
 - `README.md`, `SECURITY_AUDIT.md`: current setup, threat model, review and receipts.
 
 Other pre-existing uncommitted files, icons and workspace changes were preserved.
+The audit-only workspace also contains an uncommitted `fuzz/` harness, seed
+corpora under `corpus/`, and generated local fuzz corpora; these are not
+production behavior changes.
 
 ## Test evidence and exact verification commands
 
@@ -401,6 +556,14 @@ to project/global settings:
 cargo install cargo-audit --locked --root /tmp/opencode/ghostchat-audit-tool
 /tmp/opencode/ghostchat-audit-tool/bin/cargo-audit audit --json
 /tmp/opencode/ghostchat-audit-tool/bin/cargo-audit audit --no-fetch --json
+```
+
+The bounded fuzz commands were:
+
+```sh
+cargo +nightly fuzz run fuzz_target_1 -- -max_total_time=30 -rss_limit_mb=768
+cargo +nightly fuzz run fuzz_session -- -max_total_time=30 -rss_limit_mb=768
+cargo fmt --manifest-path fuzz/Cargo.toml -- --check
 ```
 
 Scanner warnings are explained in F8/F9. An initial shell wrapper used zsh's

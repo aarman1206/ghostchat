@@ -3,13 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
 <title>GhostChat</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="ambient ambient-left" aria-hidden="true"></div>
 <div class="ambient ambient-right" aria-hidden="true"></div>
 
@@ -19,17 +20,26 @@
       <div class="brand-mark" aria-hidden="true">👻</div>
       <div>
         <p class="brand-name">GhostChat</p>
-        <p class="brand-tagline">Session-scoped 3-person MLS chat</p>
+        <p class="brand-tagline">Private chats for up to three people</p>
       </div>
     </div>
-    <div class="topbar-actions">
-      <div class="status-chip is-connecting" id="runtime-chip" aria-live="polite">
-        <span class="status-dot is-connecting" id="runtime-dot" aria-hidden="true"></span>
-        <span id="runtime-label">Checking connection</span>
+      <div class="topbar-actions">
+        <div class="status-chip is-connecting" id="runtime-chip" role="status" aria-live="polite">
+          <span class="status-dot is-connecting" id="runtime-dot" aria-hidden="true"></span>
+          <span id="runtime-label">Checking connection</span>
+          <progress class="runtime-progress" id="runtime-progress" max="100" value="0" aria-label="Private connection setup" hidden></progress>
+        </div>
+        <button class="icon-button" id="settings-button" type="button" aria-label="Open settings" title="Settings">⚙</button>
+        <button class="icon-button" id="help-button" type="button" aria-label="About GhostChat" title="About GhostChat">?</button>
       </div>
-      <button class="icon-button" id="help-button" type="button" aria-label="About GhostChat" title="About GhostChat">?</button>
-    </div>
-  </header>
+    </header>
+
+    <nav class="mobile-nav" aria-label="Quick navigation">
+      <button class="mobile-nav-item is-active" type="button" data-go="home"><span aria-hidden="true">⌂</span><span>Rooms</span></button>
+      <button class="mobile-nav-item" type="button" data-go="create"><span aria-hidden="true">＋</span><span>New</span></button>
+      <button class="mobile-nav-item" type="button" data-go="join"><span aria-hidden="true">↗</span><span>Join</span></button>
+      <button class="mobile-nav-item" type="button" data-go="settings"><span aria-hidden="true">⚙</span><span>Settings</span></button>
+    </nav>
 
   <div class="app-layout">
     <aside class="sidebar" aria-label="GhostChat navigation">
@@ -46,6 +56,10 @@
         <button class="sidebar-nav-item" type="button" data-go="join">
           <span class="nav-symbol" aria-hidden="true">↗</span>
           <span>Join with code</span>
+        </button>
+        <button class="sidebar-nav-item" type="button" data-go="settings">
+          <span class="nav-symbol" aria-hidden="true">⚙</span>
+          <span>Settings</span>
         </button>
       </nav>
 
@@ -67,6 +81,10 @@
     </aside>
 
     <main class="main-column" id="main-content">
+      <div class="startup-loading" id="startup-loading" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span id="startup-loading-text">Checking GhostChat connection…</span>
+      </div>
       <div class="notice" id="notice" role="status" aria-live="polite" hidden>
         <span class="notice-mark" id="notice-mark" aria-hidden="true">i</span>
         <p class="notice-copy" id="notice-text"></p>
@@ -95,10 +113,18 @@
           </button>
         </div>
 
+        <div class="onboarding-strip" aria-label="Getting started">
+          <div>
+            <p class="onboarding-kicker">NEW HERE?</p>
+            <p class="onboarding-copy">Create a room, share its private invite, then wait for the secure session to become ready before sending.</p>
+          </div>
+          <button class="secondary-button" id="home-onboarding" type="button">See how it works</button>
+        </div>
+
         <div class="feature-row" aria-label="GhostChat principles">
           <div class="feature-item">
-            <p class="feature-kicker">MLS when connected</p>
-            <p class="feature-copy">Live rooms use MLS encryption after the authenticated Welcome and creator confirmation.</p>
+            <p class="feature-kicker">End-to-end encrypted</p>
+            <p class="feature-copy">Messages unlock after the room invite is verified and the owner confirms the join.</p>
           </div>
           <div class="feature-item">
             <p class="feature-kicker">Small by design</p>
@@ -112,16 +138,37 @@
 
         <div class="preview-banner" id="preview-banner" hidden>
           <span aria-hidden="true">◌</span>
-          <span>Browser preview mode — actions are simulated locally; preview messages are not encrypted or sent anywhere.</span>
+          <span>Browser preview · development only — actions are simulated locally; preview messages are not encrypted or sent anywhere.</span>
+        </div>
+      </section>
+
+      <section class="state-screen info-screen onboarding-screen" data-screen="onboarding" id="screen-onboarding" aria-labelledby="onboarding-title" hidden>
+        <div class="section-heading">
+          <div class="section-heading-copy">
+            <button class="back-button" data-history="replace" type="button" data-go="home">← Back to rooms</button>
+            <span class="eyebrow">A QUIET START</span>
+            <h2 class="section-title" id="onboarding-title" tabindex="-1">How a GhostChat room works</h2>
+            <p class="section-copy">There is no account or directory. A room exists only while its session is active, and the invite is the way people find it.</p>
+          </div>
+        </div>
+        <div class="onboarding-grid">
+          <article class="panel onboarding-card"><span class="step-number">01</span><h3>Create</h3><p>Choose a display name and an optional room label. The GhostChat core creates a fresh session and returns a signed invite.</p></article>
+          <article class="panel onboarding-card"><span class="step-number">02</span><h3>Invite privately</h3><p>Share the invite only through a channel you trust. Anyone holding it can ask to join while the room is alive.</p></article>
+          <article class="panel onboarding-card"><span class="step-number">03</span><h3>Wait for ready</h3><p>Members appear as they connect. Chat unlocks after the invite is verified and the room owner confirms the join.</p></article>
+        </div>
+        <div class="screen-actions">
+          <button class="primary-button" type="button" data-go="create">Create a room</button>
+          <button class="secondary-button" type="button" data-go="join">Join with an invite</button>
+          <button class="text-button" type="button" data-go="privacy">Read privacy notes</button>
         </div>
       </section>
 
       <section class="state-screen form-screen" data-screen="create" id="screen-create" aria-labelledby="create-title" hidden>
         <div class="section-heading">
           <div class="section-heading-copy">
-            <button class="back-button" type="button" data-go="home">← Back to rooms</button>
+            <button class="back-button" data-history="replace" type="button" data-go="home">← Back to rooms</button>
             <h2 class="section-title" id="create-title">Create a private room</h2>
-            <p class="section-copy">Give the room a name and choose how you want to appear. GhostChat will create a fresh MLS session and return an invite code.</p>
+            <p class="section-copy">Give the room a name and choose how you want to appear. GhostChat will create a private room and prepare an invite code.</p>
           </div>
         </div>
 
@@ -132,8 +179,9 @@
                 <label class="field-label" for="create-name">Your display name</label>
                 <span class="field-optional">required</span>
               </div>
-              <input class="text-input" id="create-name" name="display_name" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="e.g. Rowan" required>
-              <p class="field-hint">This is the name other people in the room will see.</p>
+              <input class="text-input" id="create-name" name="display_name" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="e.g. Rowan" aria-describedby="create-name-hint create-name-error" required>
+              <p class="field-hint" id="create-name-hint">This is the name other people in the room will see.</p>
+              <p class="field-error" id="create-name-error" role="alert" hidden></p>
             </div>
 
             <div class="field">
@@ -141,8 +189,9 @@
                 <label class="field-label" for="create-room-name">Room name</label>
                 <span class="field-optional">optional</span>
               </div>
-              <input class="text-input" id="create-room-name" name="room_name" type="text" maxlength="192" autocomplete="off" spellcheck="false" placeholder="e.g. Friday night plans">
-              <p class="field-hint">A friendly label for the room. You can keep it simple.</p>
+              <input class="text-input" id="create-room-name" name="room_name" type="text" maxlength="192" autocomplete="off" spellcheck="false" placeholder="e.g. Friday night plans" aria-describedby="create-room-name-hint create-room-name-error">
+              <p class="field-hint" id="create-room-name-hint">A friendly label for the room. You can keep it simple.</p>
+              <p class="field-error" id="create-room-name-error" role="alert" hidden></p>
             </div>
 
             <button class="primary-button form-submit" id="create-submit" type="submit">
@@ -170,7 +219,7 @@
       <section class="state-screen form-screen" data-screen="join" id="screen-join" aria-labelledby="join-title" hidden>
         <div class="section-heading">
           <div class="section-heading-copy">
-            <button class="back-button" type="button" data-go="home">← Back to rooms</button>
+            <button class="back-button" data-history="replace" type="button" data-go="home">← Back to rooms</button>
             <h2 class="section-title" id="join-title">Join a room</h2>
             <p class="section-copy">Enter the invite code you received. You will see the room and its current participants before opening the chat.</p>
           </div>
@@ -183,8 +232,9 @@
                 <label class="field-label" for="join-name">Your display name</label>
                 <span class="field-optional">required</span>
               </div>
-              <input class="text-input" id="join-name" name="display_name" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="e.g. Mina" required>
-              <p class="field-hint">Choose the name your room will recognize you by.</p>
+                <input class="text-input" id="join-name" name="display_name" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="e.g. Mina" aria-describedby="join-name-hint join-name-error" required>
+              <p class="field-hint" id="join-name-hint">Choose the name your room will recognize you by.</p>
+              <p class="field-error" id="join-name-error" role="alert" hidden></p>
             </div>
 
             <div class="field">
@@ -192,8 +242,9 @@
                 <label class="field-label" for="invite-code">Invite code</label>
                 <span class="field-optional">required</span>
               </div>
-                <textarea class="text-area invite-input" id="invite-code" name="invite_code" maxlength="16384" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Paste your room code" required></textarea>
-              <p class="field-hint">Up to 16 KiB. This is a bearer invite: anyone who has it can request to join.</p>
+                <textarea class="text-area invite-input" id="invite-code" name="invite_code" maxlength="16384" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Paste your room code" aria-describedby="invite-code-hint invite-code-error" required></textarea>
+              <p class="field-hint" id="invite-code-hint">Anyone with this code can ask to join while the room is open.</p>
+              <p class="field-error" id="invite-code-error" role="alert" hidden></p>
             </div>
 
             <button class="primary-button form-submit" id="join-submit" type="submit">
@@ -241,6 +292,7 @@
               <button class="text-button" id="copy-invite" type="button">Copy</button>
             </div>
             <code class="invite-code" id="room-code">Waiting for code</code>
+            <p class="sr-only" id="room-code-status" role="status" aria-live="polite"></p>
             <div class="room-code-actions">
               <p class="room-code-help">Clipboard may retain this bearer invite. Clear it after sharing.</p>
               <span class="security-line security-line-inline"><span aria-hidden="true">⌁</span> session-scoped</span>
@@ -265,19 +317,18 @@
             <div class="card-heading">
               <div>
                 <h3 class="card-title">Session status</h3>
-                <p class="card-subtitle">Live state from the MLS session</p>
+                <p class="card-subtitle">Live room state</p>
               </div>
             </div>
                 <dl class="session-details">
                   <div class="session-detail"><dt>State</dt><dd class="is-good" id="room-session-state">Preparing</dd></div>
-                  <div class="session-detail"><dt>Epoch</dt><dd id="room-epoch">—</dd></div>
-                  <div class="session-detail"><dt>Transport</dt><dd id="room-transport">Waiting for Tor</dd></div>
+                  <div class="session-detail"><dt>Connection</dt><dd id="room-transport">Private connection</dd></div>
                   <div class="session-detail"><dt>Network</dt><dd id="room-connection-state">Waiting</dd></div>
-                  <div class="session-detail"><dt>Tor</dt><dd id="room-tor-state">Checking</dd></div>
-                  <div class="session-detail"><dt>Encryption</dt><dd id="room-encryption-state">MLS Welcome pending</dd></div>
+                  <div class="session-detail"><dt>Private connection</dt><dd id="room-tor-state">Checking</dd></div>
+                  <div class="session-detail"><dt>Encryption</dt><dd id="room-encryption-state">Waiting for invite verification</dd></div>
             </dl>
+            <p class="room-loading-state" id="room-loading-copy" role="status" aria-live="polite" hidden></p>
             <div class="room-action-row">
-              <button class="secondary-button" id="room-advance-epoch" type="button">Rotate keys</button>
               <button class="danger-button" id="room-shutdown" type="button">End session</button>
               <button class="primary-button" id="room-enter-chat" type="button"><span class="button-label">Open chat</span> <span aria-hidden="true">→</span></button>
             </div>
@@ -296,7 +347,7 @@
                 <span class="status-dot is-ready" id="chat-state-dot" aria-hidden="true"></span>
                 <span class="is-good" id="chat-state-label">Session active</span>
                 <span class="meta-separator" aria-hidden="true">•</span>
-                <span id="chat-epoch-label">Epoch —</span>
+                <span id="chat-session-label">Securing room…</span>
               </div>
             </div>
           </div>
@@ -325,7 +376,7 @@
           <section class="panel chat-main-panel" aria-label="Messages in this session">
             <div class="message-list-header">
               <p class="message-list-label">Session messages</p>
-              <p class="message-list-hint" id="message-list-hint">Waiting for secure Welcome</p>
+              <p class="message-list-hint" id="message-list-hint">Securing room…</p>
             </div>
             <ol class="message-list" id="message-list" role="log" aria-live="polite" aria-relevant="additions text"></ol>
             <div class="empty-messages" id="empty-messages">
@@ -345,13 +396,75 @@
                 </button>
               </div>
               <div class="composer-footer">
-                <span id="composer-state">Waiting for secure Welcome</span>
+                <span id="composer-state">Securing room…</span>
                 <span><kbd>Enter</kbd> to send · single-line messages</span>
               </div>
             </form>
           </section>
         </div>
       </section>
+
+      <section class="state-screen info-screen settings-screen" data-screen="settings" id="screen-settings" aria-labelledby="settings-title" hidden>
+        <div class="section-heading">
+          <div class="section-heading-copy">
+            <button class="back-button" data-history="replace" type="button" data-go="home">← Back to rooms</button>
+            <span class="eyebrow">YOUR WORKSPACE</span>
+            <h2 class="section-title" id="settings-title" tabindex="-1">Settings</h2>
+            <p class="section-copy">These controls apply to this window only. GhostChat does not persist preferences or room history to browser storage.</p>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <section class="panel settings-card" aria-labelledby="appearance-title">
+            <div class="card-heading"><div><h3 class="card-title" id="appearance-title">Appearance</h3><p class="card-subtitle">Choose a theme for this session</p></div></div>
+            <div class="theme-options" role="group" aria-label="Theme">
+              <button class="theme-option is-selected" id="theme-system" type="button" data-theme-choice="system" aria-pressed="true"><span class="theme-swatch theme-swatch-system" aria-hidden="true"></span><span>System</span></button>
+              <button class="theme-option" id="theme-dark" type="button" data-theme-choice="dark" aria-pressed="false"><span class="theme-swatch theme-swatch-dark" aria-hidden="true"></span><span>Dark</span></button>
+              <button class="theme-option" id="theme-light" type="button" data-theme-choice="light" aria-pressed="false"><span class="theme-swatch theme-swatch-light" aria-hidden="true"></span><span>Light</span></button>
+            </div>
+            <p class="settings-note" id="theme-status">System theme selected for this window.</p>
+          </section>
+          <section class="panel settings-card" aria-labelledby="motion-title">
+            <div class="card-heading"><div><h3 class="card-title" id="motion-title">Motion</h3><p class="card-subtitle">Comfort settings for transitions</p></div></div>
+            <p class="settings-value" id="motion-status">Following your device preference</p>
+            <p class="settings-note">GhostChat respects <code>prefers-reduced-motion</code>; no room behavior depends on animation.</p>
+          </section>
+          <section class="panel settings-card settings-links" aria-labelledby="learn-title">
+            <div class="card-heading"><div><h3 class="card-title" id="learn-title">Learn about GhostChat</h3><p class="card-subtitle">Understand the limits before sharing an invite</p></div></div>
+            <button class="settings-link" type="button" data-go="privacy"><span><strong>Privacy notes</strong><small>What is kept in memory and what may remain elsewhere</small></span><span aria-hidden="true">→</span></button>
+            <button class="settings-link" type="button" data-go="security"><span><strong>Security and connections</strong><small>Encryption, private connections, invites, and delivery status</small></span><span aria-hidden="true">→</span></button>
+            <button class="settings-link" type="button" data-go="about"><span><strong>About GhostChat</strong><small>Product scope and capability boundaries</small></span><span aria-hidden="true">→</span></button>
+          </section>
+        </div>
+      </section>
+
+      <section class="state-screen info-screen" data-screen="privacy" id="screen-privacy" aria-labelledby="privacy-title" hidden>
+        <div class="section-heading"><div class="section-heading-copy"><button class="back-button" data-history="replace" type="button" data-go="settings">← Back to settings</button><span class="eyebrow">SESSION BOUNDARIES</span><h2 class="section-title" id="privacy-title" tabindex="-1">Privacy notes</h2><p class="section-copy">GhostChat limits its own persistence, but a session is not a promise that no copy can exist elsewhere.</p></div></div>
+        <div class="info-grid">
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">⌁</span><h3>Session-scoped by design</h3><p>Room state, invitations, keys, and the visible message list live in memory while the room is active. GhostChat does not write them to files, localStorage, or sessionStorage.</p></article>
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">▣</span><h3>Copies are still possible</h3><p>Other participants, clipboard managers, screenshots, the operating system, WebView caches, swap, and diagnostics may retain copies outside GhostChat’s control.</p></article>
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">⌑</span><h3>Invite privacy</h3><p>Anyone who gets the invite code can request to join while the room is open. Share it through a channel you trust and clear copied values when finished.</p></article>
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">×</span><h3>Ending clears this view</h3><p>Leaving or ending a session clears the room from this app view. That is best-effort cleanup, not forensic erasure or a guarantee of remote delivery.</p></article>
+        </div>
+        <div class="screen-actions"><button class="primary-button" type="button" data-go="security">Review security model</button><button class="text-button" data-history="replace" type="button" data-go="home">Back to rooms</button></div>
+      </section>
+
+      <section class="state-screen info-screen" data-screen="security" id="screen-security" aria-labelledby="security-title" hidden>
+        <div class="section-heading"><div class="section-heading-copy"><button class="back-button" data-history="replace" type="button" data-go="settings">← Back to settings</button><span class="eyebrow">WHAT THE ROOM CAN PROVE</span><h2 class="section-title" id="security-title" tabindex="-1">Security model</h2><p class="section-copy">The interface only reports capabilities supplied by the GhostChat core. A successful button press is not a claim of remote receipt.</p></div></div>
+        <div class="info-grid">
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">◎</span><h3>End-to-end encryption</h3><p>Messages unlock after GhostChat verifies the room invite and the owner confirms the join. Each room uses fresh session keys.</p></article>
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">◌</span><h3>Private connections</h3><p>Room traffic uses GhostChat’s built-in private network connection. It does not fall back to ordinary internet connections or a public room directory.</p></article>
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">↗</span><h3>Membership is visible</h3><p>Participants and presence are shown to room members. The room owner is also a member and can read messages; display names are not verified identities.</p></article>
+          <article class="panel info-card"><span class="info-icon" aria-hidden="true">✓</span><h3>Delivery is unconfirmed</h3><p>A queued message means the core accepted it for transport. It does not confirm that peers received it. Check the room before retrying an unknown send.</p></article>
+        </div>
+        <div class="screen-actions"><button class="primary-button" type="button" data-go="create">Create a room</button><button class="text-button" type="button" data-go="privacy">Read privacy notes</button></div>
+      </section>
+
+      <section class="state-screen info-screen about-screen" data-screen="about" id="screen-about" aria-labelledby="about-title" hidden>
+        <div class="section-heading"><div class="section-heading-copy"><button class="back-button" data-history="replace" type="button" data-go="home">← Back to rooms</button><span class="eyebrow">ABOUT THE PRODUCT</span><h2 class="section-title" id="about-title" tabindex="-1">GhostChat</h2><p class="section-copy">Invitation-only, session-scoped chat for at most three participants. No account, public feed, or room directory.</p></div></div>
+        <article class="panel about-card"><div class="about-mark" aria-hidden="true">👻</div><div><h3>A small room for the people who should be in it.</h3><p>GhostChat uses its application core for room lifecycle, private connections, encrypted membership, and bounded in-memory history. This interface reflects that live state and keeps unavailable actions visibly locked.</p><p class="about-version">Version 0.1.0 · Android ARM64</p><p class="about-disclaimer">GhostChat has not been independently audited or certified as an anonymity product. Read the privacy and security notes before relying on it.</p></div></article>
+        <div class="screen-actions"><button class="primary-button" type="button" data-go="onboarding">View getting started</button><button class="text-button" type="button" data-go="security">Security and connections</button><a class="secondary-button" href="licenses/index.html">Open-source notices</a></div>
+      </section>
+
     </main>
   </div>
 </div>
